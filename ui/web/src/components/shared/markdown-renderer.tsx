@@ -16,7 +16,7 @@ function CodeBlock({
   const lang = className?.replace("language-", "") ?? "";
 
   return (
-    <div className="group relative">
+    <div className="group relative overflow-hidden rounded-md">
       <div className="flex items-center justify-between rounded-t-md bg-muted px-3 py-1 text-xs text-muted-foreground">
         <span>{lang || "code"}</span>
         <button
@@ -28,7 +28,7 @@ function CodeBlock({
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
         </button>
       </div>
-      <pre className="!mt-0 !rounded-t-none">
+      <pre className="!mt-0 !rounded-t-none !bg-muted/50 !text-foreground overflow-x-auto">
         <code className={className}>{children}</code>
       </pre>
     </div>
@@ -93,6 +93,12 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
           },
           td({ children, ...props }) {
             return <td className="border-t px-3 py-2" {...props}>{children}</td>;
+          },
+          input({ type, checked, ...props }) {
+            if (type === "checkbox") {
+              return <input type="checkbox" checked={checked} disabled className="mr-1" {...props} />;
+            }
+            return <input type={type} {...props} />;
           },
         }}
       >
