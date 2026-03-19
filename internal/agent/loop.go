@@ -808,6 +808,12 @@ func (l *Loop) runLoop(ctx context.Context, req RunRequest) (*RunResult, error) 
 			break
 		}
 
+		// Ensure globally unique tool call IDs (OpenAI-compatible APIs return 400 on duplicates).
+		// Skip if raw content is present (Anthropic thinking passback) to avoid desync.
+		if resp.RawAssistantContent == nil {
+			resp.ToolCalls = uniquifyToolCallIDs(resp.ToolCalls, req.RunID, iteration)
+		}
+
 		// Build assistant message with tool calls
 		assistantMsg := providers.Message{
 			Role:                "assistant",
