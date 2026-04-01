@@ -244,11 +244,9 @@ func MergeCronSchedule(current CronSchedule, patch *CronSchedule) CronSchedule {
 		} else if current.Kind == newKind {
 			merged.Expr = current.Expr
 		}
-		if patch.TZ != "" {
-			merged.TZ = patch.TZ
-		} else if current.Kind == newKind {
-			merged.TZ = current.TZ
-		}
+		// TZ: always use patch value. Empty = UTC (default).
+		// Callers (UI, agent tool) send full schedule via spread, so empty is explicit.
+		merged.TZ = patch.TZ
 	case "every":
 		if patch.EveryMS != nil {
 			merged.EveryMS = patch.EveryMS
