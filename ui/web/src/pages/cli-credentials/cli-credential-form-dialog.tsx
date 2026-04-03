@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import type { ManualEnvEntry } from "./cli-credential-env-vars-section";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -11,15 +12,12 @@ import { Switch } from "@/components/ui/switch";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, X, Search, Check, AlertCircle } from "lucide-react";
+import { Search, Check, AlertCircle } from "lucide-react";
 import { useHttp } from "@/hooks/use-ws";
 import { useAgents } from "@/pages/agents/hooks/use-agents";
 import type { SecureCLIBinary, CLICredentialInput, CLIPreset } from "./hooks/use-cli-credentials";
+import { CliCredentialEnvVarsSection } from "./cli-credential-env-vars-section";
 
-interface ManualEnvEntry {
-  key: string;
-  value: string;
-}
 
 interface Props {
   open: boolean;
@@ -31,6 +29,7 @@ interface Props {
 
 const NONE_PRESET = "__none__";
 const GLOBAL_AGENT = "__global__";
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function CliCredentialFormDialog({ open, onOpenChange, credential, presets, onSubmit }: Props) {
   const { t } = useTranslation("cli-credentials");
@@ -50,12 +49,9 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
   const [enabled, setEnabled] = useState(true);
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
   const [manualEnvEntries, setManualEnvEntries] = useState<ManualEnvEntry[]>([]);
-  /** Snapshot when dialog opens (edit) — detect clearing all env rows */
   const [initialEnvKeys, setInitialEnvKeys] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  // Check binary state
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<{ found: boolean; path?: string; error?: string } | null>(null);
 
@@ -63,10 +59,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
   const presetEntries: Array<[string, CLIPreset]> = Object.entries(presets).filter(
     (e): e is [string, CLIPreset] => e[1] !== undefined,
   );
-
-  const activePreset: CLIPreset | null =
-    selectedPreset !== NONE_PRESET ? (presets[selectedPreset] ?? null) : null;
-
+  const activePreset: CLIPreset | null = selectedPreset !== NONE_PRESET ? (presets[selectedPreset] ?? null) : null;
   const isManualMode = selectedPreset === NONE_PRESET;
 
   useEffect(() => {
@@ -111,9 +104,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
         if (!cancelled) applyEnvKeys([]);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [open, credential, http]);
 
   const applyPreset = (key: string) => {
@@ -142,9 +133,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
         { binary_name: name },
       );
       setCheckResult(res);
-      if (res.found && res.path) {
-        setBinaryPath(res.path);
-      }
+      if (res.found && res.path) setBinaryPath(res.path);
     } catch {
       setCheckResult({ found: false, error: t("form.binaryNotFound") });
     } finally {
@@ -152,24 +141,8 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
     }
   };
 
-  const addManualEnvEntry = useCallback(() => {
-    setManualEnvEntries((prev) => [...prev, { key: "", value: "" }]);
-  }, []);
-
-  const removeManualEnvEntry = useCallback((index: number) => {
-    setManualEnvEntries((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const updateManualEnvEntry = useCallback((index: number, field: "key" | "value", val: string) => {
-    setManualEnvEntries((prev) =>
-      prev.map((entry, i) => (i === index ? { ...entry, [field]: val } : entry)),
-    );
-  }, []);
-
   const splitCommaList = (v: string): string[] =>
     v.split(",").map((s) => s.trim()).filter(Boolean);
-
-  const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
   const buildEnvPayload = (): Record<string, string> | null => {
     if (!isManualMode) return envValues;
@@ -186,10 +159,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
   };
 
   const handleSubmit = async () => {
-    if (!binaryName.trim()) {
-      setError(t("form.binaryNameRequired"));
-      return;
-    }
+    if (!binaryName.trim()) { setError(t("form.binaryNameRequired")); return; }
     setLoading(true);
     setError("");
     try {
@@ -246,92 +216,24 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                {t("form.presetHint")}
-              </p>
+              <p className="text-xs text-muted-foreground">{t("form.presetHint")}</p>
             </div>
           )}
 
-          {/* Existing credentials indicator (edit mode) */}
           {isEdit && (
             <p className="text-xs text-muted-foreground rounded-md border border-dashed p-2">
               {t("form.encryptedHint")}
             </p>
           )}
 
-          {/* Env var inputs from preset */}
-          {activePreset && activePreset.env_vars.length > 0 && (
-            <div className="grid gap-3 rounded-md border p-3">
-              <p className="text-sm font-medium">{t("form.envVars")}</p>
-              {activePreset.env_vars.map((ev) => (
-                <div key={ev.name} className="grid gap-1.5">
-                  <Label htmlFor={`env-${ev.name}`}>
-                    {ev.name}
-                    {ev.optional && <span className="ml-1 text-xs text-muted-foreground">({tc("optional")})</span>}
-                  </Label>
-                  <Input
-                    id={`env-${ev.name}`}
-                    type="password"
-                    autoComplete="off"
-                    placeholder={ev.desc}
-                    value={envValues[ev.name] ?? ""}
-                    onChange={(e) => setEnvValues((prev) => ({ ...prev, [ev.name]: e.target.value }))}
-                    className="text-base md:text-sm"
-                  />
-                  {ev.desc && (
-                    <p className="text-xs text-muted-foreground">{ev.desc}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Manual env var entries (no preset selected) */}
-          {isManualMode && (
-            <div className="grid gap-3 rounded-md border p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium">{t("form.envVars")}</p>
-                <Button type="button" variant="outline" size="sm" onClick={addManualEnvEntry}>
-                  <Plus className="mr-1 h-3.5 w-3.5" />
-                  {t("form.addEnvVar")}
-                </Button>
-              </div>
-              {manualEnvEntries.length === 0 && (
-                <p className="text-xs text-muted-foreground">{t("form.noEnvVarsHint")}</p>
-              )}
-              {manualEnvEntries.map((entry, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  <div className="grid flex-1 gap-1.5">
-                    <Input
-                      placeholder={t("form.envKeyPlaceholder")}
-                      value={entry.key}
-                      onChange={(e) => updateManualEnvEntry(idx, "key", e.target.value)}
-                      className="text-base md:text-sm font-mono"
-                    />
-                  </div>
-                  <div className="grid flex-1 gap-1.5">
-                    <Input
-                      type="password"
-                      autoComplete="off"
-                      placeholder={t("form.envValuePlaceholder")}
-                      value={entry.value}
-                      onChange={(e) => updateManualEnvEntry(idx, "value", e.target.value)}
-                      className="text-base md:text-sm"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="mt-0.5 h-8 w-8 shrink-0"
-                    onClick={() => removeManualEnvEntry(idx)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
+          <CliCredentialEnvVarsSection
+            isManualMode={isManualMode}
+            activePreset={activePreset}
+            envValues={envValues}
+            setEnvValues={setEnvValues}
+            manualEnvEntries={manualEnvEntries}
+            setManualEnvEntries={setManualEnvEntries}
+          />
 
           {/* Binary name + check button */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -360,13 +262,17 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
               {checkResult && (
                 <p className={`text-xs flex items-center gap-1 ${checkResult.found ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
                   {checkResult.found ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-                  {checkResult.found ? t("form.binaryFound", { path: checkResult.path }) : (checkResult.error || t("form.binaryNotFound"))}
+                  {checkResult.found
+                    ? t("form.binaryFound", { path: checkResult.path })
+                    : (checkResult.error || t("form.binaryNotFound"))}
                 </p>
               )}
               {checking && <p className="text-xs text-muted-foreground">{t("form.checking")}</p>}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="cc-path">{t("form.binaryPath")} <span className="text-xs text-muted-foreground">({tc("optional")})</span></Label>
+              <Label htmlFor="cc-path">
+                {t("form.binaryPath")} <span className="text-xs text-muted-foreground">({tc("optional")})</span>
+              </Label>
               <Input
                 id="cc-path"
                 value={binaryPath}
@@ -392,7 +298,9 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="cc-deny-args">{t("form.denyArgs")} <span className="text-xs text-muted-foreground">({t("form.commaSeparated")})</span></Label>
+              <Label htmlFor="cc-deny-args">
+                {t("form.denyArgs")} <span className="text-xs text-muted-foreground">({t("form.commaSeparated")})</span>
+              </Label>
               <Input
                 id="cc-deny-args"
                 value={denyArgs}
@@ -415,7 +323,9 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
           </div>
 
           <div className="grid gap-1.5">
-            <Label htmlFor="cc-deny-verbose">{t("form.denyVerbose")} <span className="text-xs text-muted-foreground">({t("form.commaSeparated")})</span></Label>
+            <Label htmlFor="cc-deny-verbose">
+              {t("form.denyVerbose")} <span className="text-xs text-muted-foreground">({t("form.commaSeparated")})</span>
+            </Label>
             <Input
               id="cc-deny-verbose"
               value={denyVerbose}
@@ -437,9 +347,10 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
             />
           </div>
 
-          {/* Agent selector */}
           <div className="grid gap-1.5">
-            <Label>{t("form.agentId")} <span className="text-xs text-muted-foreground">({t("form.agentIdHint")})</span></Label>
+            <Label>
+              {t("form.agentId")} <span className="text-xs text-muted-foreground">({t("form.agentIdHint")})</span>
+            </Label>
             <Select value={agentId || GLOBAL_AGENT} onValueChange={(v) => setAgentId(v === GLOBAL_AGENT ? "" : v)}>
               <SelectTrigger className="text-base md:text-sm">
                 <SelectValue placeholder={t("placeholders.agentId")} />
