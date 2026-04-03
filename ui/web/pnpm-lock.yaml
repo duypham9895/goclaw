@@ -17,6 +17,9 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@19.2.4)
+      '@hookform/resolvers':
+        specifier: ^5.2.2
+        version: 5.2.2(react-hook-form@7.72.1(react@19.2.4))
       '@tailwindcss/typography':
         specifier: ^0.5.19
         version: 0.5.19(tailwindcss@4.2.2)
@@ -68,6 +71,9 @@ importers:
       react-force-graph-2d:
         specifier: ^1.29.1
         version: 1.29.1(react@19.2.4)
+      react-hook-form:
+        specifier: ^7.72.1
+        version: 7.72.1(react@19.2.4)
       react-i18next:
         specifier: ^17.0.1
         version: 17.0.1(i18next@26.0.1(typescript@6.0.2))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@6.0.2)
@@ -89,6 +95,9 @@ importers:
       tailwind-merge:
         specifier: ^3.5.0
         version: 3.5.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
       zustand:
         specifier: ^5.0.12
         version: 5.0.12(@types/react@19.2.14)(immer@11.1.4)(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
@@ -175,6 +184,11 @@ packages:
 
   '@floating-ui/utils@0.2.11':
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
+
+  '@hookform/resolvers@5.2.2':
+    resolution: {integrity: sha512-A/IxlMLShx3KjV/HeTcTfaMxdwy690+L/ZADoeaTltLx+CVuzkeVIPuybK3jrRfw7YZnmdKsVVHAlEPIAEUNlA==}
+    peerDependencies:
+      react-hook-form: ^7.55.0
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -1880,6 +1894,12 @@ packages:
     peerDependencies:
       react: '*'
 
+  react-hook-form@7.72.1:
+    resolution: {integrity: sha512-RhwBoy2ygeVZje+C+bwJ8g0NjTdBmDlJvAUHTxRjTmSUKPYsKfMphkS2sgEMotsY03bP358yEYlnUeZy//D9Ig==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      react: ^16.8.0 || ^17 || ^18 || ^19
+
   react-i18next@17.0.1:
     resolution: {integrity: sha512-iG65FGnFHcYyHNuT01ukffYWCOBFTWSdVD8EZd/dCVWgtjFPObcSsvYYNwcsokO/rDcTb5d6D8Acv8MrOdm6Hw==}
     peerDependencies:
@@ -2197,6 +2217,9 @@ packages:
       utf-8-validate:
         optional: true
 
+  zod@4.3.6:
+    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+
   zustand@4.5.7:
     resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
     engines: {node: '>=12.7.0'}
@@ -2294,6 +2317,11 @@ snapshots:
       react-dom: 19.2.4(react@19.2.4)
 
   '@floating-ui/utils@0.2.11': {}
+
+  '@hookform/resolvers@5.2.2(react-hook-form@7.72.1(react@19.2.4))':
+    dependencies:
+      '@standard-schema/utils': 0.3.0
+      react-hook-form: 7.72.1(react@19.2.4)
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -4202,6 +4230,10 @@ snapshots:
       react: 19.2.4
       react-kapsule: 2.5.7(react@19.2.4)
 
+  react-hook-form@7.72.1(react@19.2.4):
+    dependencies:
+      react: 19.2.4
+
   react-i18next@17.0.1(i18next@26.0.1(typescript@6.0.2))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@6.0.2):
     dependencies:
       '@babel/runtime': 7.29.2
@@ -4548,6 +4580,8 @@ snapshots:
   void-elements@3.1.0: {}
 
   ws@8.20.0: {}
+
+  zod@4.3.6: {}
 
   zustand@4.5.7(@types/react@19.2.14)(immer@11.1.4)(react@19.2.4):
     dependencies:

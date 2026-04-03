@@ -1,4 +1,6 @@
-import { useState, useMemo, useEffect } from "react";
+import { useMemo, useEffect } from "react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import { ChevronRight } from "lucide-react";
 import {
@@ -22,11 +24,13 @@ import {
 } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
 import type { AgentData } from "@/types/agent";
-import { slugify, isValidSlug } from "@/lib/slug";
+import { slugify } from "@/lib/slug";
 import { useProviders } from "@/pages/providers/hooks/use-providers";
 import { useProviderModels } from "@/pages/providers/hooks/use-provider-models";
 import { useProviderVerify } from "@/pages/providers/hooks/use-provider-verify";
 import { useAgentPresets } from "./agent-presets";
+import { agentCreateSchema, type AgentCreateFormData } from "@/schemas/agent.schema";
+import { useState } from "react";
 
 interface AgentCreateDialogProps {
   open: boolean;
@@ -38,21 +42,32 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
   const { t } = useTranslation("agents");
   const agentPresets = useAgentPresets();
   const { providers } = useProviders();
-  const [emoji, setEmoji] = useState("");
-  const [agentKey, setAgentKey] = useState("");
-  const [keyTouched, setKeyTouched] = useState(false);
-  const [displayName, setDisplayName] = useState("");
-  const [provider, setProvider] = useState("");
-  const [model, setModel] = useState("");
-  const [agentType, setAgentType] = useState<"open" | "predefined">("predefined");
-  const [description, setDescription] = useState("");
-  const [selfEvolve, setSelfEvolve] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+
+  const form = useForm<AgentCreateFormData>({
+    resolver: zodResolver(agentCreateSchema),
+    mode: "onChange",
+    defaultValues: {
+      emoji: "",
+      displayName: "",
+      agentKey: "",
+      provider: "",
+      model: "",
+      agentType: "predefined",
+      description: "",
+      selfEvolve: false,
+    },
+  });
+
+  const { register, control, handleSubmit, watch, setValue, reset, formState: { errors } } = form;
+
+  const provider = watch("provider");
+  const model = watch("model");
+  const agentType = watch("agentType");
 
   const enabledProviders = providers.filter((p) => p.enabled);
 
-  // Look up provider ID from selected provider name for model fetching
   const selectedProvider = useMemo(
     () => enabledProviders.find((p) => p.name === provider),
     [enabledProviders, provider],
@@ -66,6 +81,15 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
     resetVerify();
   }, [provider, model, resetVerify]);
 
+  // Reset form when dialog closes
+  useEffect(() => {
+    if (!open) {
+      reset();
+      setSubmitError("");
+      resetVerify();
+    }
+  }, [open, reset, resetVerify]);
+
   const handleVerify = async () => {
     if (!selectedProviderId || !model.trim()) return;
     await verify(selectedProviderId, model.trim());
@@ -74,48 +98,45 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
   const handleVerifyAndCreate = async () => {
     if (!selectedProviderId || !model.trim()) return;
     const res = await verify(selectedProviderId, model.trim());
-    if (res?.valid) await handleCreate();
+    if (res?.valid) await handleSubmitForm(form.getValues());
   };
 
-  const handleCreate = async () => {
-    if (!agentKey.trim()) return;
+  const handleSubmitForm = async (data: AgentCreateFormData) => {
     setLoading(true);
-    setError("");
+    setSubmitError("");
     try {
       const otherConfig: Record<string, unknown> = {};
-      if (emoji.trim()) otherConfig.emoji = emoji.trim();
-      if (description.trim()) otherConfig.description = description.trim();
-      if (selfEvolve) otherConfig.self_evolve = true;
+      if (data.emoji?.trim()) otherConfig.emoji = data.emoji.trim();
+      if (data.description?.trim()) otherConfig.description = data.description.trim();
+      if (data.selfEvolve) otherConfig.self_evolve = true;
       await onCreate({
-        agent_key: agentKey.trim(),
-        display_name: displayName.trim() || undefined,
-        provider: provider.trim(),
-        model: model.trim(),
-        agent_type: agentType,
+        agent_key: data.agentKey,
+        display_name: data.displayName || undefined,
+        provider: data.provider,
+        model: data.model,
+        agent_type: data.agentType,
         other_config: Object.keys(otherConfig).length > 0 ? otherConfig : undefined,
       });
       onOpenChange(false);
-      setEmoji("");
-      setAgentKey("");
-      setKeyTouched(false);
-      setDisplayName("");
-      setProvider("");
-      setModel("");
-      setAgentType("predefined");
-      setDescription("");
-      setSelfEvolve(false);
-      setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("create.failedToCreate"));
+      setSubmitError(err instanceof Error ? err.message : t("create.failedToCreate"));
     } finally {
       setLoading(false);
     }
   };
 
   const handleProviderChange = (value: string) => {
-    setProvider(value);
-    setModel("");
+    setValue("provider", value, { shouldValidate: true });
+    setValue("model", "", { shouldValidate: false });
   };
+
+  const displayName = watch("displayName");
+  const agentKey = watch("agentKey");
+
+  // Derived submit button state
+  const canCreate = !!agentKey && !!displayName && !!provider && !!model &&
+    !errors.agentKey && !errors.displayName &&
+    (agentType !== "predefined" || !!watch("description")?.trim());
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -130,8 +151,7 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
               <div className="flex gap-2">
                 <Input
                   id="emoji"
-                  value={emoji}
-                  onChange={(e) => setEmoji(e.target.value)}
+                  {...register("emoji")}
                   placeholder="🤖"
                   className="w-14 shrink-0 text-center text-lg"
                   maxLength={2}
@@ -139,11 +159,12 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
                 />
                 <Input
                   id="displayName"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  onBlur={() => {
-                    if (!keyTouched && displayName.trim()) {
-                      setAgentKey(slugify(displayName.trim()));
+                  {...register("displayName")}
+                  onBlur={(e) => {
+                    register("displayName").onBlur(e);
+                    const name = e.target.value.trim();
+                    if (name && !form.getFieldState("agentKey").isDirty) {
+                      setValue("agentKey", slugify(name), { shouldValidate: true });
                     }
                   }}
                   placeholder={t("create.displayNamePlaceholder")}
@@ -154,37 +175,44 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
               <Label htmlFor="agentKey">{t("create.agentKey")}</Label>
               <Input
                 id="agentKey"
-                value={agentKey}
-                onChange={(e) => {
-                  setKeyTouched(true);
-                  setAgentKey(e.target.value);
+                {...register("agentKey")}
+                onBlur={(e) => {
+                  setValue("agentKey", slugify(e.target.value), { shouldValidate: true });
                 }}
-                onBlur={() => setAgentKey(slugify(agentKey))}
                 placeholder={t("create.agentKeyPlaceholder")}
               />
-              <p className="text-xs text-muted-foreground">{t("create.agentKeyHint")}</p>
+              {errors.agentKey ? (
+                <p className="text-xs text-destructive">{errors.agentKey.message}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">{t("create.agentKeyHint")}</p>
+              )}
             </div>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>{t("create.provider")}</Label>
               {enabledProviders.length > 0 ? (
-                <Select value={provider} onValueChange={handleProviderChange}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t("create.selectProvider")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {enabledProviders.map((p) => (
-                      <SelectItem key={p.name} value={p.name}>
-                        {p.display_name || p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Controller
+                  control={control}
+                  name="provider"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={handleProviderChange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={t("create.selectProvider")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {enabledProviders.map((p) => (
+                          <SelectItem key={p.name} value={p.name}>
+                            {p.display_name || p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               ) : (
                 <Input
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
+                  {...register("provider")}
                   placeholder="openrouter"
                 />
               )}
@@ -193,11 +221,17 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
               <Label>{t("create.model")}</Label>
               <div className="flex gap-2">
                 <div className="flex-1">
-                  <Combobox
-                    value={model}
-                    onChange={setModel}
-                    options={models.map((m) => ({ value: m.id, label: m.name }))}
-                    placeholder={modelsLoading ? t("create.loadingModels") : t("create.enterOrSelectModel")}
+                  <Controller
+                    control={control}
+                    name="model"
+                    render={({ field }) => (
+                      <Combobox
+                        value={field.value}
+                        onChange={(v) => setValue("model", v, { shouldValidate: true })}
+                        options={models.map((m) => ({ value: m.id, label: m.name }))}
+                        placeholder={modelsLoading ? t("create.loadingModels") : t("create.enterOrSelectModel")}
+                      />
+                    )}
                   />
                 </div>
                 <Button
@@ -229,7 +263,7 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
                   <button
                     key={preset.label}
                     type="button"
-                    onClick={() => setDescription(preset.prompt)}
+                    onClick={() => setValue("description", preset.prompt, { shouldValidate: true })}
                     className="rounded-full border px-2.5 py-0.5 text-xs transition-colors hover:bg-accent"
                   >
                     {preset.label}
@@ -237,8 +271,7 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
                 ))}
               </div>
               <Textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                {...register("description")}
                 placeholder={t("create.descriptionPlaceholder")}
                 className="min-h-[120px]"
               />
@@ -250,7 +283,13 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
                   <Label htmlFor="create-self-evolve" className="text-sm font-normal">{t("create.selfEvolution")}</Label>
                   <p className="text-xs text-muted-foreground">{t("create.selfEvolutionHint")}</p>
                 </div>
-                <Switch id="create-self-evolve" checked={selfEvolve} onCheckedChange={setSelfEvolve} />
+                <Controller
+                  control={control}
+                  name="selfEvolve"
+                  render={({ field }) => (
+                    <Switch id="create-self-evolve" checked={field.value} onCheckedChange={field.onChange} />
+                  )}
+                />
               </div>
             </div>
           ) : (
@@ -263,7 +302,7 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
                 variant="outline"
                 size="sm"
                 className="h-7 text-xs"
-                onClick={() => setAgentType("predefined")}
+                onClick={() => setValue("agentType", "predefined")}
               >
                 {t("create.switchToPredefined")}
               </Button>
@@ -273,15 +312,15 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
           {/* Collapsible toggle for Open agent type */}
           <button
             type="button"
-            onClick={() => setAgentType(agentType === "open" ? "predefined" : "open")}
+            onClick={() => setValue("agentType", agentType === "open" ? "predefined" : "open")}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <ChevronRight className={`h-3 w-3 transition-transform ${agentType === "open" ? "rotate-90" : ""}`} />
             {t("create.useOpenAgent")}
           </button>
 
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
+          {submitError && (
+            <p className="text-sm text-destructive">{submitError}</p>
           )}
         </div>
         <DialogFooter>
@@ -291,11 +330,17 @@ export function AgentCreateDialog({ open, onOpenChange, onCreate }: AgentCreateD
           {loading ? (
             <Button disabled>{t("create.creating")}</Button>
           ) : !verifyResult?.valid && selectedProviderId && model.trim() ? (
-            <Button onClick={handleVerifyAndCreate} disabled={verifying || !displayName.trim() || !agentKey.trim() || !isValidSlug(agentKey) || (agentType === "predefined" && !description.trim())}>
+            <Button
+              onClick={handleVerifyAndCreate}
+              disabled={verifying || !canCreate}
+            >
               {verifying ? t("create.checking") : t("create.checkAndCreate")}
             </Button>
           ) : (
-            <Button onClick={handleCreate} disabled={!displayName.trim() || !agentKey.trim() || !isValidSlug(agentKey) || !provider.trim() || !model.trim() || !verifyResult?.valid || (agentType === "predefined" && !description.trim())}>
+            <Button
+              onClick={handleSubmit(handleSubmitForm)}
+              disabled={!canCreate || !verifyResult?.valid || loading}
+            >
               {t("create.create")}
             </Button>
           )}

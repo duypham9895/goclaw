@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import {
   Dialog,
@@ -20,13 +22,14 @@ import {
 } from "@/components/ui/select";
 import type { ChannelInstanceData, ChannelInstanceInput } from "./hooks/use-channel-instances";
 import type { AgentData } from "@/types/agent";
-import { slugify, isValidSlug } from "@/lib/slug";
+import { slugify } from "@/lib/slug";
 import { credentialsSchema, configSchema, wizardConfig, type FieldDef } from "./channel-schemas";
 import { ChannelFields } from "./channel-fields";
 import { ChannelScopesInfo } from "./channel-scopes-info";
 import { wizardAuthSteps, wizardConfigSteps, wizardEditConfigs } from "./channel-wizard-registry";
 import { TelegramGroupOverrides } from "./telegram-group-overrides";
 import { CHANNEL_TYPES } from "@/constants/channels";
+import { channelInstanceSchema, type ChannelInstanceFormData } from "@/schemas/channel.schema";
 
 type WizardStep = "form" | "auth" | "config";
 
@@ -49,21 +52,28 @@ export function ChannelInstanceFormDialog({
 }: ChannelInstanceFormDialogProps) {
   const { t } = useTranslation("channels");
 
-  const [name, setName] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [channelType, setChannelType] = useState("telegram");
-  const [agentId, setAgentId] = useState("");
+  // Non-form state (dynamic maps + wizard flow)
   const [credsValues, setCredsValues] = useState<Record<string, unknown>>({});
   const [configValues, setConfigValues] = useState<Record<string, unknown>>({});
-  const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  // Wizard state (activated for channels with wizardConfig on create only)
   const [step, setStep] = useState<WizardStep>("form");
   const [createdInstanceId, setCreatedInstanceId] = useState<string | null>(null);
   const [authCompleted, setAuthCompleted] = useState(false);
 
+  const form = useForm<ChannelInstanceFormData>({
+    resolver: zodResolver(channelInstanceSchema),
+    mode: "onChange",
+    defaultValues: {
+      name: "",
+      displayName: "",
+      channelType: "telegram",
+      agentId: "",
+      enabled: true,
+    },
+  });
+
+  const channelType = form.watch("channelType");
   const wizard = wizardConfig[channelType];
   const hasWizard = !instance && !!wizard;
   const channelLabel = CHANNEL_TYPES.find((ct) => ct.value === channelType)?.label ?? channelType;
@@ -81,11 +91,15 @@ export function ChannelInstanceFormDialog({
 
   useEffect(() => {
     if (open) {
-      setName(instance?.name ?? "");
-      setDisplayName(instance?.display_name ?? "");
-      setChannelType(instance?.channel_type ?? "telegram");
-      setAgentId(instance?.agent_id ?? (agents[0]?.id ?? ""));
+      form.reset({
+        name: instance?.name ?? "",
+        displayName: instance?.display_name ?? "",
+        channelType: instance?.channel_type ?? "telegram",
+        agentId: instance?.agent_id ?? (agents[0]?.id ?? ""),
+        enabled: instance?.enabled ?? true,
+      });
       setCredsValues({});
+
       // Merge schema defaults into config so select fields persist their defaults.
       const ct = instance?.channel_type ?? "telegram";
       const schema = configSchema[ct] ?? [];
@@ -103,13 +117,12 @@ export function ChannelInstanceFormDialog({
         else if (merged[key] === undefined || merged[key] === null) merged[key] = "inherit";
       }
       setConfigValues(merged);
-      setEnabled(instance?.enabled ?? true);
       setError("");
       setStep("form");
       setCreatedInstanceId(null);
       setAuthCompleted(false);
     }
-  }, [open, instance, agents]);
+  }, [open, instance, agents, form]);
 
   // Auto-advance from auth to next step on completion
   useEffect(() => {
@@ -144,16 +157,9 @@ export function ChannelInstanceFormDialog({
     }
   };
 
-  const handleSubmit = async () => {
-    if (!name.trim()) { setError(t("form.errors.keyRequired")); return; }
-    if (!isValidSlug(name.trim())) {
-      setError(t("form.errors.keySlug"));
-      return;
-    }
-    if (!agentId) { setError(t("form.errors.agentRequired")); return; }
-
+  const handleSubmit = form.handleSubmit(async (values) => {
     if (!instance) {
-      const schema = credentialsSchema[channelType] ?? [];
+      const schema = credentialsSchema[values.channelType] ?? [];
       const missing = schema.filter((f) => f.required && !credsValues[f.key]);
       if (missing.length > 0) {
         setError(t("form.errors.requiredFields", { fields: missing.map((f) => f.label).join(", ") }));
@@ -164,7 +170,7 @@ export function ChannelInstanceFormDialog({
     const cleanConfig = Object.fromEntries(
       Object.entries(configValues).filter(([, v]) => v !== undefined && v !== "" && v !== null),
     );
-    coerceBoolSelects(cleanConfig, configSchema[channelType] ?? []);
+    coerceBoolSelects(cleanConfig, configSchema[values.channelType] ?? []);
     const cleanCreds = Object.fromEntries(
       Object.entries(credsValues).filter(([, v]) => v !== undefined && v !== "" && v !== null),
     );
@@ -173,12 +179,12 @@ export function ChannelInstanceFormDialog({
     setError("");
     try {
       const data: ChannelInstanceInput = {
-        name: name.trim(),
-        display_name: displayName.trim() || undefined,
-        channel_type: channelType,
-        agent_id: agentId,
+        name: values.name,
+        display_name: values.displayName?.trim() || undefined,
+        channel_type: values.channelType,
+        agent_id: values.agentId,
         config: Object.keys(cleanConfig).length > 0 ? cleanConfig : undefined,
-        enabled,
+        enabled: values.enabled,
       };
       if (Object.keys(cleanCreds).length > 0) data.credentials = cleanCreds;
 
@@ -201,7 +207,7 @@ export function ChannelInstanceFormDialog({
     } finally {
       setLoading(false);
     }
-  };
+  });
 
   const handleConfigDone = async () => {
     if (!createdInstanceId || !onUpdate) { onOpenChange(false); return; }
@@ -246,6 +252,8 @@ export function ChannelInstanceFormDialog({
         ? t("form.authenticate", { label: channelLabel })
         : t("form.configure", { label: channelLabel });
 
+  const { register, control, formState: { errors } } = form;
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!loading && canClose) onOpenChange(v); }}>
       <DialogContent className="max-h-[85vh] flex flex-col">
@@ -264,37 +272,64 @@ export function ChannelInstanceFormDialog({
             <div className="grid gap-4 py-2 -mx-4 px-4 sm:-mx-6 sm:px-6 overflow-y-auto min-h-0">
               <div className="grid gap-1.5">
                 <Label htmlFor="ci-name">{t("form.key")}</Label>
-                <Input id="ci-name" value={name} onChange={(e) => setName(slugify(e.target.value))} placeholder={t("form.keyPlaceholder")} disabled={!!instance} />
+                <Input
+                  id="ci-name"
+                  {...register("name", {
+                    setValueAs: (v: string) => slugify(v),
+                  })}
+                  onChange={(e) => form.setValue("name", slugify(e.target.value), { shouldValidate: true })}
+                  value={form.watch("name")}
+                  placeholder={t("form.keyPlaceholder")}
+                  disabled={!!instance}
+                />
+                {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
                 <p className="text-xs text-muted-foreground">{t("form.keyHint")}</p>
               </div>
 
               <div className="grid gap-1.5">
                 <Label htmlFor="ci-display">{t("form.displayName")}</Label>
-                <Input id="ci-display" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t("form.displayNamePlaceholder")} />
+                <Input
+                  id="ci-display"
+                  {...register("displayName")}
+                  placeholder={t("form.displayNamePlaceholder")}
+                />
               </div>
 
               <div className="grid gap-1.5">
                 <Label>{t("form.channelType")}</Label>
-                <Select value={channelType} onValueChange={setChannelType} disabled={!!instance}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {CHANNEL_TYPES.map((ct) => (
-                      <SelectItem key={ct.value} value={ct.value}>{ct.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Controller
+                  control={control}
+                  name="channelType"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange} disabled={!!instance}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {CHANNEL_TYPES.map((ct) => (
+                          <SelectItem key={ct.value} value={ct.value}>{ct.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               </div>
 
               <div className="grid gap-1.5">
                 <Label>{t("form.agent")}</Label>
-                <Select value={agentId} onValueChange={setAgentId}>
-                  <SelectTrigger><SelectValue placeholder={t("form.selectAgent")} /></SelectTrigger>
-                  <SelectContent>
-                    {agents.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>{a.display_name || a.agent_key}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Controller
+                  control={control}
+                  name="agentId"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger><SelectValue placeholder={t("form.selectAgent")} /></SelectTrigger>
+                      <SelectContent>
+                        {agents.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>{a.display_name || a.agent_key}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                {errors.agentId && <p className="text-xs text-destructive">{errors.agentId.message}</p>}
               </div>
 
               {credsFields.length > 0 && (
@@ -356,7 +391,13 @@ export function ChannelInstanceFormDialog({
               )}
 
               <div className="flex items-center gap-2">
-                <Switch id="ci-enabled" checked={enabled} onCheckedChange={setEnabled} />
+                <Controller
+                  control={control}
+                  name="enabled"
+                  render={({ field }) => (
+                    <Switch id="ci-enabled" checked={field.value} onCheckedChange={field.onChange} />
+                  )}
+                />
                 <Label htmlFor="ci-enabled">{t("form.enabled")}</Label>
               </div>
               {error && <p className="text-sm text-destructive">{error}</p>}

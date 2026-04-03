@@ -1,5 +1,7 @@
 import type { ManualEnvEntry } from "./cli-credential-env-vars-section";
 import { useState, useEffect } from "react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useTranslation } from "react-i18next";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -17,6 +19,7 @@ import { useHttp } from "@/hooks/use-ws";
 import { useAgents } from "@/pages/agents/hooks/use-agents";
 import type { SecureCLIBinary, CLICredentialInput, CLIPreset } from "./hooks/use-cli-credentials";
 import { CliCredentialEnvVarsSection } from "./cli-credential-env-vars-section";
+import { cliCredentialSchema, type CliCredentialFormData } from "@/schemas/credential.schema";
 
 
 interface Props {
@@ -37,16 +40,8 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
   const http = useHttp();
   const { agents } = useAgents();
 
+  // Non-form state: preset selection, env vars, binary check, loading
   const [selectedPreset, setSelectedPreset] = useState(NONE_PRESET);
-  const [binaryName, setBinaryName] = useState("");
-  const [binaryPath, setBinaryPath] = useState("");
-  const [description, setDescription] = useState("");
-  const [denyArgs, setDenyArgs] = useState("");
-  const [denyVerbose, setDenyVerbose] = useState("");
-  const [timeout, setTimeout] = useState(30);
-  const [tips, setTips] = useState("");
-  const [agentId, setAgentId] = useState("");
-  const [enabled, setEnabled] = useState(true);
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
   const [manualEnvEntries, setManualEnvEntries] = useState<ManualEnvEntry[]>([]);
   const [initialEnvKeys, setInitialEnvKeys] = useState<string[]>([]);
@@ -62,18 +57,39 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
   const activePreset: CLIPreset | null = selectedPreset !== NONE_PRESET ? (presets[selectedPreset] ?? null) : null;
   const isManualMode = selectedPreset === NONE_PRESET;
 
+  const form = useForm<CliCredentialFormData>({
+    resolver: zodResolver(cliCredentialSchema),
+    mode: "onChange",
+    defaultValues: {
+      binaryName: "",
+      binaryPath: "",
+      description: "",
+      denyArgs: "",
+      denyVerbose: "",
+      timeout: 30,
+      tips: "",
+      agentId: "",
+      enabled: true,
+    },
+  });
+
+  const { register, control, formState: { errors }, setValue, watch } = form;
+  const binaryName = watch("binaryName");
+
   useEffect(() => {
     if (!open) return;
     setSelectedPreset(NONE_PRESET);
-    setBinaryName(credential?.binary_name ?? "");
-    setBinaryPath(credential?.binary_path ?? "");
-    setDescription(credential?.description ?? "");
-    setDenyArgs((credential?.deny_args ?? []).join(", "));
-    setDenyVerbose((credential?.deny_verbose ?? []).join(", "));
-    setTimeout(credential?.timeout_seconds ?? 30);
-    setTips(credential?.tips ?? "");
-    setAgentId(credential?.agent_id ?? "");
-    setEnabled(credential?.enabled ?? true);
+    form.reset({
+      binaryName: credential?.binary_name ?? "",
+      binaryPath: credential?.binary_path ?? "",
+      description: credential?.description ?? "",
+      denyArgs: (credential?.deny_args ?? []).join(", "),
+      denyVerbose: (credential?.deny_verbose ?? []).join(", "),
+      timeout: credential?.timeout_seconds ?? 30,
+      tips: credential?.tips ?? "",
+      agentId: credential?.agent_id ?? "",
+      enabled: credential?.enabled ?? true,
+    });
     setEnvValues({});
     setError("");
     setCheckResult(null);
@@ -105,19 +121,24 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
       }
     })();
     return () => { cancelled = true; };
-  }, [open, credential, http]);
+  }, [open, credential, http, form]);
 
   const applyPreset = (key: string) => {
     setSelectedPreset(key);
     if (key === NONE_PRESET) return;
     const p = presets[key];
     if (!p) return;
-    setBinaryName(p.binary_name);
-    setDescription(p.description);
-    setDenyArgs(p.deny_args.join(", "));
-    setDenyVerbose(p.deny_verbose.join(", "));
-    setTimeout(p.timeout);
-    setTips(p.tips);
+    form.reset({
+      binaryName: p.binary_name,
+      binaryPath: "",
+      description: p.description,
+      denyArgs: p.deny_args.join(", "),
+      denyVerbose: p.deny_verbose.join(", "),
+      timeout: p.timeout,
+      tips: p.tips,
+      agentId: "",
+      enabled: true,
+    });
     setEnvValues({});
     setManualEnvEntries([]);
   };
@@ -133,7 +154,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
         { binary_name: name },
       );
       setCheckResult(res);
-      if (res.found && res.path) setBinaryPath(res.path);
+      if (res.found && res.path) setValue("binaryPath", res.path);
     } catch {
       setCheckResult({ found: false, error: t("form.binaryNotFound") });
     } finally {
@@ -158,21 +179,20 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
     return env;
   };
 
-  const handleSubmit = async () => {
-    if (!binaryName.trim()) { setError(t("form.binaryNameRequired")); return; }
+  const handleSubmit = form.handleSubmit(async (values) => {
     setLoading(true);
     setError("");
     try {
       const payload: CLICredentialInput = {
-        binary_name: binaryName.trim(),
-        binary_path: binaryPath.trim() || undefined,
-        description: description.trim(),
-        deny_args: splitCommaList(denyArgs),
-        deny_verbose: splitCommaList(denyVerbose),
-        timeout_seconds: timeout,
-        tips: tips.trim(),
-        agent_id: agentId.trim() || undefined,
-        enabled,
+        binary_name: values.binaryName.trim(),
+        binary_path: values.binaryPath?.trim() || undefined,
+        description: values.description?.trim() ?? "",
+        deny_args: splitCommaList(values.denyArgs ?? ""),
+        deny_verbose: splitCommaList(values.denyVerbose ?? ""),
+        timeout_seconds: values.timeout,
+        tips: values.tips?.trim() ?? "",
+        agent_id: values.agentId?.trim() || undefined,
+        enabled: values.enabled,
       };
       if (selectedPreset !== NONE_PRESET) payload.preset = selectedPreset;
       const env = buildEnvPayload();
@@ -189,7 +209,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
     } finally {
       setLoading(false);
     }
-  };
+  });
 
   return (
     <Dialog open={open} onOpenChange={(v) => !loading && onOpenChange(v)}>
@@ -242,8 +262,9 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
               <div className="flex gap-1.5">
                 <Input
                   id="cc-name"
-                  value={binaryName}
-                  onChange={(e) => { setBinaryName(e.target.value); setCheckResult(null); }}
+                  {...register("binaryName", {
+                    onChange: () => setCheckResult(null),
+                  })}
                   placeholder={t("placeholders.binaryName")}
                   className="text-base md:text-sm"
                 />
@@ -259,6 +280,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
                   <Search className="h-4 w-4" />
                 </Button>
               </div>
+              {errors.binaryName && <p className="text-xs text-destructive">{errors.binaryName.message}</p>}
               {checkResult && (
                 <p className={`text-xs flex items-center gap-1 ${checkResult.found ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
                   {checkResult.found ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
@@ -275,8 +297,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
               </Label>
               <Input
                 id="cc-path"
-                value={binaryPath}
-                onChange={(e) => setBinaryPath(e.target.value)}
+                {...register("binaryPath")}
                 placeholder={t("placeholders.binaryPath")}
                 className="text-base md:text-sm"
               />
@@ -288,8 +309,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
             <Label htmlFor="cc-desc">{tc("description")}</Label>
             <Textarea
               id="cc-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              {...register("description")}
               placeholder={t("placeholders.description")}
               rows={2}
               className="text-base md:text-sm"
@@ -303,8 +323,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
               </Label>
               <Input
                 id="cc-deny-args"
-                value={denyArgs}
-                onChange={(e) => setDenyArgs(e.target.value)}
+                {...register("denyArgs")}
                 placeholder={t("placeholders.denyArgs")}
                 className="text-base md:text-sm"
               />
@@ -315,8 +334,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
                 id="cc-timeout"
                 type="number"
                 min={1}
-                value={timeout}
-                onChange={(e) => setTimeout(Number(e.target.value))}
+                {...register("timeout", { valueAsNumber: true })}
                 className="text-base md:text-sm"
               />
             </div>
@@ -328,8 +346,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
             </Label>
             <Input
               id="cc-deny-verbose"
-              value={denyVerbose}
-              onChange={(e) => setDenyVerbose(e.target.value)}
+              {...register("denyVerbose")}
               placeholder={t("placeholders.denyVerbose")}
               className="text-base md:text-sm"
             />
@@ -339,8 +356,7 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
             <Label htmlFor="cc-tips">{t("form.tips")}</Label>
             <Textarea
               id="cc-tips"
-              value={tips}
-              onChange={(e) => setTips(e.target.value)}
+              {...register("tips")}
               placeholder={t("placeholders.tips")}
               rows={2}
               className="text-base md:text-sm"
@@ -351,23 +367,38 @@ export function CliCredentialFormDialog({ open, onOpenChange, credential, preset
             <Label>
               {t("form.agentId")} <span className="text-xs text-muted-foreground">({t("form.agentIdHint")})</span>
             </Label>
-            <Select value={agentId || GLOBAL_AGENT} onValueChange={(v) => setAgentId(v === GLOBAL_AGENT ? "" : v)}>
-              <SelectTrigger className="text-base md:text-sm">
-                <SelectValue placeholder={t("placeholders.agentId")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={GLOBAL_AGENT}>{t("placeholders.agentId")}</SelectItem>
-                {agents.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>
-                    {a.display_name || a.agent_key || a.id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Controller
+              control={control}
+              name="agentId"
+              render={({ field }) => (
+                <Select
+                  value={field.value || GLOBAL_AGENT}
+                  onValueChange={(v) => field.onChange(v === GLOBAL_AGENT ? "" : v)}
+                >
+                  <SelectTrigger className="text-base md:text-sm">
+                    <SelectValue placeholder={t("placeholders.agentId")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={GLOBAL_AGENT}>{t("placeholders.agentId")}</SelectItem>
+                    {agents.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.display_name || a.agent_key || a.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
           </div>
 
           <div className="flex items-center gap-2">
-            <Switch id="cc-enabled" checked={enabled} onCheckedChange={setEnabled} />
+            <Controller
+              control={control}
+              name="enabled"
+              render={({ field }) => (
+                <Switch id="cc-enabled" checked={field.value} onCheckedChange={field.onChange} />
+              )}
+            />
             <Label htmlFor="cc-enabled">{tc("enabled")}</Label>
           </div>
 

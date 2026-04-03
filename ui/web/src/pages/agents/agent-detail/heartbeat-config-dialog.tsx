@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useForm, Controller } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Play, Loader2, Heart, Clock, FileText, Cpu } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -20,6 +22,7 @@ import type { HeartbeatConfig, DeliveryTarget } from "@/pages/agents/hooks/use-a
 import { HeartbeatScheduleSection } from "./heartbeat-schedule-section";
 import { HeartbeatAdvancedPanel } from "./heartbeat-advanced-panel";
 import { HeartbeatDeliverySection } from "./heartbeat-delivery-section";
+import { heartbeatConfigSchema, type HeartbeatConfigFormData } from "@/schemas/heartbeat.schema";
 
 interface HeartbeatConfigDialogProps {
   open: boolean;
@@ -48,20 +51,7 @@ export function HeartbeatConfigDialog({
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const defaultTz = userTz && userTz !== "auto" ? userTz : browserTz;
 
-  const [enabled, setEnabled] = useState(false);
-  const [intervalMin, setIntervalMin] = useState(30);
-  const [ackMaxChars, setAckMaxChars] = useState(300);
-  const [maxRetries, setMaxRetries] = useState(2);
-  const [isolatedSession, setIsolatedSession] = useState(false);
-  const [lightContext, setLightContext] = useState(false);
-  const [activeHoursStart, setActiveHoursStart] = useState("");
-  const [activeHoursEnd, setActiveHoursEnd] = useState("");
-  const [timezone, setTimezone] = useState("");
-  const [channel, setChannel] = useState("");
-  const [chatId, setChatId] = useState("");
-  const [hbProvider, setHbProvider] = useState("");
-  const [hbModel, setHbModel] = useState("");
-  const [checklist, setChecklistState] = useState("");
+  // Non-form state: checklist tracking, targets, test spinner
   const [originalChecklist, setOriginalChecklist] = useState("");
   const [checklistLoading, setChecklistLoading] = useState(false);
   const [targets, setTargets] = useState<DeliveryTarget[]>([]);
@@ -74,37 +64,88 @@ export function HeartbeatConfigDialog({
     return map;
   }, [providers]);
 
+  const form = useForm<HeartbeatConfigFormData>({
+    resolver: zodResolver(heartbeatConfigSchema),
+    mode: "onChange",
+    defaultValues: {
+      enabled: false,
+      intervalMin: 30,
+      ackMaxChars: 300,
+      maxRetries: 2,
+      isolatedSession: false,
+      lightContext: false,
+      activeHoursStart: "",
+      activeHoursEnd: "",
+      timezone: "",
+      channel: "",
+      chatId: "",
+      hbProvider: "",
+      hbModel: "",
+      checklist: "",
+    },
+  });
+
+  const { control, register, watch, setValue } = form;
+  const enabled = watch("enabled");
+  const hbProvider = watch("hbProvider") ?? "";
+  const hbModel = watch("hbModel") ?? "";
+  const channel = watch("channel") ?? "";
+  const chatId = watch("chatId") ?? "";
+  const activeHoursStart = watch("activeHoursStart") ?? "";
+  const activeHoursEnd = watch("activeHoursEnd") ?? "";
+  const timezone = watch("timezone") ?? "";
+  const ackMaxChars = watch("ackMaxChars");
+  const maxRetries = watch("maxRetries");
+  const isolatedSession = watch("isolatedSession");
+  const lightContext = watch("lightContext");
+
   const loadChecklist = useCallback(async () => {
     setChecklistLoading(true);
     try {
       const content = await getChecklist();
-      setChecklistState(content);
+      setValue("checklist", content);
       setOriginalChecklist(content);
     } catch { /* ignore */ } finally {
       setChecklistLoading(false);
     }
-  }, [getChecklist]);
+  }, [getChecklist, setValue]);
 
   useEffect(() => {
     if (!open) return;
     if (config) {
-      setEnabled(config.enabled);
-      setIntervalMin(Math.round(config.intervalSec / 60));
-      setAckMaxChars(config.ackMaxChars);
-      setMaxRetries(config.maxRetries);
-      setIsolatedSession(config.isolatedSession);
-      setLightContext(config.lightContext);
-      setActiveHoursStart(config.activeHoursStart ?? "");
-      setActiveHoursEnd(config.activeHoursEnd ?? "");
-      setTimezone(config.timezone || defaultTz);
-      setChannel(config.channel ?? "");
-      setChatId(config.chatId ?? "");
-      setHbProvider(config.providerId ? (providerNameById[config.providerId] ?? "") : "");
-      setHbModel(config.model ?? "");
+      form.reset({
+        enabled: config.enabled,
+        intervalMin: Math.round(config.intervalSec / 60),
+        ackMaxChars: config.ackMaxChars,
+        maxRetries: config.maxRetries,
+        isolatedSession: config.isolatedSession,
+        lightContext: config.lightContext,
+        activeHoursStart: config.activeHoursStart ?? "",
+        activeHoursEnd: config.activeHoursEnd ?? "",
+        timezone: config.timezone || defaultTz,
+        channel: config.channel ?? "",
+        chatId: config.chatId ?? "",
+        hbProvider: config.providerId ? (providerNameById[config.providerId] ?? "") : "",
+        hbModel: config.model ?? "",
+        checklist: "",
+      });
     } else {
-      setTimezone(defaultTz);
-      setHbProvider("");
-      setHbModel("");
+      form.reset({
+        enabled: false,
+        intervalMin: 30,
+        ackMaxChars: 300,
+        maxRetries: 2,
+        isolatedSession: false,
+        lightContext: false,
+        activeHoursStart: "",
+        activeHoursEnd: "",
+        timezone: defaultTz,
+        channel: "",
+        chatId: "",
+        hbProvider: "",
+        hbModel: "",
+        checklist: "",
+      });
     }
     loadChecklist();
     fetchTargets().then(setTargets).catch(() => {});
@@ -116,38 +157,38 @@ export function HeartbeatConfigDialog({
     try { await test(); } finally { setTestRunning(false); }
   };
 
-  const handleSave = async () => {
-    if (timezone && !isValidIanaTimezone(timezone)) {
+  const handleSave = form.handleSubmit(async (values) => {
+    if (values.timezone && !isValidIanaTimezone(values.timezone)) {
       toast.error(t("heartbeat.invalidTimezone", "Invalid timezone"));
       return;
     }
     try {
-      const clampedMin = Math.max(5, intervalMin);
+      const clampedMin = Math.max(5, values.intervalMin);
       await update({
-        enabled,
+        enabled: values.enabled,
         intervalSec: clampedMin * 60,
-        ackMaxChars,
-        maxRetries,
-        isolatedSession,
-        lightContext,
-        activeHoursStart: activeHoursStart || undefined,
-        activeHoursEnd: activeHoursEnd || undefined,
-        timezone: timezone || undefined,
-        channel: channel || undefined,
-        chatId: chatId || undefined,
-        model: hbModel || undefined,
-        providerName: hbProvider || undefined,
+        ackMaxChars: values.ackMaxChars,
+        maxRetries: values.maxRetries,
+        isolatedSession: values.isolatedSession,
+        lightContext: values.lightContext,
+        activeHoursStart: values.activeHoursStart || undefined,
+        activeHoursEnd: values.activeHoursEnd || undefined,
+        timezone: values.timezone || undefined,
+        channel: values.channel || undefined,
+        chatId: values.chatId || undefined,
+        model: values.hbModel || undefined,
+        providerName: values.hbProvider || undefined,
       });
-      if (checklist !== originalChecklist) {
-        await setChecklist(checklist);
-        setOriginalChecklist(checklist);
+      if (values.checklist !== originalChecklist) {
+        await setChecklist(values.checklist ?? "");
+        setOriginalChecklist(values.checklist ?? "");
       }
       await refresh();
       onOpenChange(false);
     } catch {
       // toast shown by hook — keep dialog open
     }
-  };
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -167,7 +208,13 @@ export function HeartbeatConfigDialog({
           {/* Enable + Interval */}
           <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
             <div className="flex items-center gap-3 min-w-0">
-              <Switch checked={enabled} onCheckedChange={setEnabled} />
+              <Controller
+                control={control}
+                name="enabled"
+                render={({ field }) => (
+                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                )}
+              />
               <div className="min-w-0">
                 <span className="text-sm font-medium">{t("heartbeat.enabled")}</span>
                 <p className="text-xs text-muted-foreground">{t("heartbeat.enabledHint")}</p>
@@ -178,8 +225,10 @@ export function HeartbeatConfigDialog({
               <Input
                 type="number"
                 min={5}
-                value={intervalMin}
-                onChange={(e) => setIntervalMin(Math.max(5, Number(e.target.value) || 5))}
+                {...register("intervalMin", {
+                  valueAsNumber: true,
+                  onChange: (e) => setValue("intervalMin", Math.max(5, Number(e.target.value) || 5)),
+                })}
                 className="w-[4.5rem] text-center text-base md:text-sm"
               />
               <span className="text-xs text-muted-foreground">min</span>
@@ -197,9 +246,9 @@ export function HeartbeatConfigDialog({
             <p className="text-xs text-muted-foreground">{t("heartbeat.modelHint")}</p>
             <ProviderModelSelect
               provider={hbProvider}
-              onProviderChange={setHbProvider}
+              onProviderChange={(v) => setValue("hbProvider", v)}
               model={hbModel}
-              onModelChange={setHbModel}
+              onModelChange={(v) => setValue("hbModel", v)}
               allowEmpty
               showVerify={!!(hbProvider && hbModel)}
               providerPlaceholder={agentProvider ? `(${agentProvider})` : "(agent default)"}
@@ -209,23 +258,23 @@ export function HeartbeatConfigDialog({
 
           <HeartbeatDeliverySection
             channelNames={channelNames}
-            channel={channel} setChannel={setChannel}
-            chatId={chatId} setChatId={setChatId}
+            channel={channel} setChannel={(v) => setValue("channel", v)}
+            chatId={chatId} setChatId={(v) => setValue("chatId", v)}
             targets={targets}
           />
 
           <HeartbeatScheduleSection
-            activeHoursStart={activeHoursStart} setActiveHoursStart={setActiveHoursStart}
-            activeHoursEnd={activeHoursEnd} setActiveHoursEnd={setActiveHoursEnd}
-            timezone={timezone} setTimezone={setTimezone}
+            activeHoursStart={activeHoursStart} setActiveHoursStart={(v) => setValue("activeHoursStart", v)}
+            activeHoursEnd={activeHoursEnd} setActiveHoursEnd={(v) => setValue("activeHoursEnd", v)}
+            timezone={timezone} setTimezone={(v) => setValue("timezone", v)}
             defaultTz={defaultTz}
           />
 
           <HeartbeatAdvancedPanel
-            ackMaxChars={ackMaxChars} setAckMaxChars={setAckMaxChars}
-            maxRetries={maxRetries} setMaxRetries={setMaxRetries}
-            isolatedSession={isolatedSession} setIsolatedSession={setIsolatedSession}
-            lightContext={lightContext} setLightContext={setLightContext}
+            ackMaxChars={ackMaxChars} setAckMaxChars={(v) => setValue("ackMaxChars", v)}
+            maxRetries={maxRetries} setMaxRetries={(v) => setValue("maxRetries", v)}
+            isolatedSession={isolatedSession} setIsolatedSession={(v) => setValue("isolatedSession", v)}
+            lightContext={lightContext} setLightContext={(v) => setValue("lightContext", v)}
           />
 
           {/* Checklist */}
@@ -244,8 +293,7 @@ export function HeartbeatConfigDialog({
               </div>
             ) : (
               <Textarea
-                value={checklist}
-                onChange={(e) => setChecklistState(e.target.value)}
+                {...register("checklist")}
                 placeholder={t("heartbeat.checklistPlaceholder")}
                 rows={8}
                 className="text-base md:text-sm font-mono resize-y min-h-[120px] sm:min-h-[200px]"
