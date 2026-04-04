@@ -200,15 +200,26 @@ func (l *InstanceLoader) LoadedNames() map[string]struct{} {
 	return result
 }
 
+// qualifiedChannelName creates a tenant-scoped key for the channel manager.
+// Uses first 8 chars of tenant UUID as prefix for brevity.
+// Returns name as-is for zero UUID (single-tenant / legacy).
+func qualifiedChannelName(tenantID uuid.UUID, name string) string {
+	if tenantID == uuid.Nil {
+		return name
+	}
+	return tenantID.String()[:8] + ":" + name
+}
+
 // loadInstance creates and registers a single channel from a DB instance (caller must hold lock).
 // If autoStart is true, the channel is started immediately (used by Reload).
 // If false, the caller is responsible for starting (used by LoadAll, where StartAll handles it).
 func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelInstanceData, autoStart bool) error {
-	l.loaded[inst.Name] = struct{}{}
+	qName := qualifiedChannelName(inst.TenantID, inst.Name)
+	l.loaded[qName] = struct{}{}
 
 	factory, ok := l.factories[inst.ChannelType]
 	if !ok {
-		l.manager.RecordHealth(inst.Name, NewChannelHealthForType(
+		l.manager.RecordHealth(qName, NewChannelHealthForType(
 			inst.ChannelType,
 			ChannelHealthStateFailed,
 			"Unsupported channel type",
@@ -216,7 +227,7 @@ func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelIns
 			ChannelFailureKindConfig,
 			false,
 		))
-		slog.Warn("no factory for channel type", "type", inst.ChannelType, "name", inst.Name)
+		slog.Warn("no factory for channel type", "type", inst.ChannelType, "name", qName)
 		return nil
 	}
 
@@ -224,13 +235,13 @@ func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelIns
 	// Older UI versions saved select-based bool fields as strings.
 	cfg := coerceStringBools(inst.Config)
 
-	ch, err := factory(inst.Name, inst.Credentials, cfg, l.msgBus, l.pairingSvc)
+	ch, err := factory(qName, inst.Credentials, cfg, l.msgBus, l.pairingSvc)
 	if err != nil {
-		l.manager.RecordFailureForType(inst.Name, inst.ChannelType, "", err)
+		l.manager.RecordFailureForType(qName, inst.ChannelType, "", err)
 		return err
 	}
 	if ch == nil {
-		l.manager.RecordHealth(inst.Name, NewChannelHealthForType(
+		l.manager.RecordHealth(qName, NewChannelHealthForType(
 			inst.ChannelType,
 			ChannelHealthStateFailed,
 			"Missing credentials",
@@ -238,7 +249,7 @@ func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelIns
 			ChannelFailureKindConfig,
 			false,
 		))
-		slog.Info("channel instance not ready (missing credentials)", "name", inst.Name, "type", inst.ChannelType)
+		slog.Info("channel instance not ready (missing credentials)", "name", qName, "type", inst.ChannelType)
 		return nil
 	}
 
@@ -250,8 +261,8 @@ func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelIns
 		var err error
 		ag, err = l.agentStore.GetByID(instCtx, inst.AgentID)
 		if err != nil {
-			l.manager.RecordFailureForType(inst.Name, inst.ChannelType, "", fmt.Errorf("agent %s not found for channel %s: %w", inst.AgentID, inst.Name, err))
-			return fmt.Errorf("agent %s not found for channel %s: %w", inst.AgentID, inst.Name, err)
+			l.manager.RecordFailureForType(qName, inst.ChannelType, "", fmt.Errorf("agent %s not found for channel %s: %w", inst.AgentID, qName, err))
+			return fmt.Errorf("agent %s not found for channel %s: %w", inst.AgentID, qName, err)
 		}
 		base.SetAgentID(ag.AgentKey)
 	}
@@ -308,7 +319,7 @@ func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelIns
 				cc.MaxTokens = l.pendingCompactCfg.MaxTokens
 			}
 			pc.SetPendingCompaction(cc)
-			slog.Debug("pending compaction configured", "channel", inst.Name, "provider", p.Name(), "model", model,
+			slog.Debug("pending compaction configured", "channel", qName, "provider", p.Name(), "model", model,
 				"threshold", cc.Threshold, "keep_recent", cc.KeepRecent, "max_tokens", cc.MaxTokens)
 		} else {
 			attemptedProvider := ""
@@ -319,23 +330,23 @@ func (l *InstanceLoader) loadInstance(ctx context.Context, inst store.ChannelIns
 				attemptedProvider = ag.Provider
 			}
 			slog.Warn("pending compaction not configured: provider/model unavailable",
-				"channel", inst.Name, "agent_id", inst.AgentID, "attempted_provider", attemptedProvider)
+				"channel", qName, "agent_id", inst.AgentID, "attempted_provider", attemptedProvider)
 		}
 	}
-	l.manager.RegisterChannel(inst.Name, ch)
+	l.manager.RegisterChannel(qName, ch)
 
 	// Start the channel if requested (Reload path). LoadAll defers to StartAll.
 	if autoStart {
 		if err := ch.Start(ctx); err != nil {
-			l.manager.recordChannelStartFailure(inst.Name, ch, "", err)
-			slog.Error("channel instance start failed", "name", inst.Name, "error", err)
+			l.manager.recordChannelStartFailure(qName, ch, "", err)
+			slog.Error("channel instance start failed", "name", qName, "error", err)
 			// Still registered — will show as not running.
 		} else {
-			l.manager.RecordHealth(inst.Name, snapshotChannelHealth(ch))
+			l.manager.RecordHealth(qName, snapshotChannelHealth(ch))
 		}
 	}
 
 	slog.Info("channel instance loaded",
-		"name", inst.Name, "type", inst.ChannelType, "agent_id", inst.AgentID)
+		"name", qName, "type", inst.ChannelType, "agent_id", inst.AgentID)
 	return nil
 }
