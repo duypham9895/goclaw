@@ -5,7 +5,10 @@ package updater
 import (
 	"archive/tar"
 	"archive/zip"
+	"bufio"
+	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +38,7 @@ type UpdateInfo struct {
 	Available    bool   `json:"available"`
 	Version      string `json:"version"`       // e.g. "0.2.0"
 	DownloadURL  string `json:"download_url"`  // asset URL for current OS/arch
+	ChecksumURL  string `json:"checksum_url"`  // URL to CHECKSUMS.sha256 file (may be empty)
 	ReleaseURL   string `json:"release_url"`   // GitHub release page
 	ReleaseNotes string `json:"release_notes"` // release body markdown
 }
@@ -97,10 +101,13 @@ func CheckForUpdate(currentVersion string) (*UpdateInfo, error) {
 			continue
 		}
 
+		checksumURL := findChecksumAsset(rel.Assets)
+
 		return &UpdateInfo{
 			Available:    true,
 			Version:      relVersion,
 			DownloadURL:  assetURL,
+			ChecksumURL:  checksumURL,
 			ReleaseURL:   rel.HTMLURL,
 			ReleaseNotes: rel.Body,
 		}, nil
@@ -130,6 +137,77 @@ func findAsset(assets []githubAsset, goos, goarch string) string {
 	return ""
 }
 
+// findChecksumAsset returns the download URL for a checksums file in the release assets.
+// Looks for files ending in "CHECKSUMS.sha256", "checksums.txt", or "SHA256SUMS".
+func findChecksumAsset(assets []githubAsset) string {
+	candidates := []string{"CHECKSUMS.sha256", "checksums.txt", "SHA256SUMS"}
+	for _, a := range assets {
+		name := strings.ToLower(a.Name)
+		for _, c := range candidates {
+			if strings.EqualFold(a.Name, c) || strings.HasSuffix(name, strings.ToLower(c)) {
+				return a.BrowserDownloadURL
+			}
+		}
+	}
+	return ""
+}
+
+// verifyChecksum computes SHA-256 of data and compares against expectedHash.
+func verifyChecksum(data []byte, expectedHash string) error {
+	actual := fmt.Sprintf("%x", sha256.Sum256(data))
+	if actual != expectedHash {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, actual)
+	}
+	return nil
+}
+
+// downloadChecksums fetches the checksums file and returns its content.
+func downloadChecksums(url string) ([]byte, error) {
+	if !strings.HasPrefix(url, "https://") {
+		return nil, fmt.Errorf("checksum URL must use HTTPS")
+	}
+	resp, err := httpClient.Do(mustNewRequest("GET", url))
+	if err != nil {
+		return nil, fmt.Errorf("download checksums: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("download checksums: %s", resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+}
+
+// mustNewRequest creates an HTTP request, panicking on error (URL is already validated).
+func mustNewRequest(method, url string) *http.Request {
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		panic("invalid URL: " + err.Error())
+	}
+	return req
+}
+
+// lookupExpectedHash parses a checksums file (sha256sum format: "hash  filename")
+// and returns the hash for the given asset filename.
+func lookupExpectedHash(checksumData []byte, assetFilename string) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(checksumData))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		// Format: "hash  filename" or "hash filename"
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			hash := parts[0]
+			fname := parts[len(parts)-1]
+			if fname == assetFilename {
+				return hash, true
+			}
+		}
+	}
+	return "", false
+}
+
 // DownloadAndApply downloads the update asset and replaces the current app.
 // appPath is the path to the current .app bundle (macOS) or .exe (Windows).
 func DownloadAndApply(info *UpdateInfo, appPath string) error {
@@ -154,17 +232,49 @@ func DownloadAndApply(info *UpdateInfo, appPath string) error {
 		return fmt.Errorf("download: %s", resp.Status)
 	}
 
+	// Read the full archive into memory for checksum verification before extraction.
+	archiveData, err := io.ReadAll(io.LimitReader(resp.Body, maxFileSize))
+	if err != nil {
+		return fmt.Errorf("read archive: %w", err)
+	}
+
+	// Verify checksum if a checksums file is available in the release.
+	if info.ChecksumURL != "" {
+		checksumData, err := downloadChecksums(info.ChecksumURL)
+		if err != nil {
+			slog.Warn("updater: failed to download checksums file, skipping verification", "error", err)
+		} else {
+			// Extract the asset filename from the download URL.
+			parts := strings.Split(info.DownloadURL, "/")
+			assetFilename := parts[len(parts)-1]
+
+			expectedHash, found := lookupExpectedHash(checksumData, assetFilename)
+			if !found {
+				slog.Warn("updater: asset not found in checksums file, skipping verification", "asset", assetFilename)
+			} else {
+				if err := verifyChecksum(archiveData, expectedHash); err != nil {
+					return fmt.Errorf("updater: %w", err)
+				}
+				slog.Info("updater: checksum verified", "asset", assetFilename)
+			}
+		}
+	} else {
+		slog.Warn("updater: no checksums file in release, skipping verification")
+	}
+
 	tmpDir, err := os.MkdirTemp("", "goclaw-update-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
+	archiveReader := bytes.NewReader(archiveData)
+
 	switch runtime.GOOS {
 	case "darwin":
-		return applyMacOS(resp.Body, tmpDir, appPath)
+		return applyMacOS(archiveReader, tmpDir, appPath)
 	case "windows":
-		return applyWindows(resp.Body, tmpDir, appPath)
+		return applyWindows(archiveReader, tmpDir, appPath)
 	default:
 		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}
