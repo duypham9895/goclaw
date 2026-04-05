@@ -11,9 +11,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	// MaxJobsPerUser is the maximum number of cron jobs a single user may create.
+	MaxJobsPerUser = 20
+)
+
 var (
 	ErrCronJobNotFound    = errors.New("cron job not found")
 	ErrCronJobNoFutureRun = errors.New("cron job has no future run")
+	ErrCronJobLimitExceeded = fmt.Errorf("maximum of %d cron jobs per user exceeded", MaxJobsPerUser)
 )
 
 // CronJob represents a scheduled job.
@@ -281,6 +287,10 @@ func ValidateCronSchedule(schedule *CronSchedule) error {
 	case "every":
 		if schedule.EveryMS == nil || *schedule.EveryMS <= 0 {
 			return fmt.Errorf("every schedule requires positive everyMs")
+		}
+		const minEveryMs = 60000 // 1 minute minimum for 'every' schedules
+		if *schedule.EveryMS < minEveryMs {
+			return fmt.Errorf("minimum interval for 'every' schedule is 60 seconds (got %dms)", *schedule.EveryMS)
 		}
 	case "at":
 		if schedule.AtMS == nil {
