@@ -16,6 +16,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/gateway"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
+	"github.com/nextlevelbuilder/goclaw/internal/scheduler"
 	"github.com/nextlevelbuilder/goclaw/internal/sessions"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
@@ -24,16 +25,24 @@ import (
 
 // ChatMethods handles chat.send, chat.history, chat.abort, chat.inject.
 type ChatMethods struct {
-	agents      *agent.Router
-	sessions    store.SessionStore
-	cfg         *config.Config
-	rateLimiter *gateway.RateLimiter
-	eventBus    bus.EventPublisher
-	postTurn    tools.PostTurnProcessor
+	agents          *agent.Router
+	sessions        store.SessionStore
+	cfg             *config.Config
+	rateLimiter     *gateway.RateLimiter
+	eventBus        bus.EventPublisher
+	postTurn        tools.PostTurnProcessor
+	userConcurrency *scheduler.UserConcurrencyLimiter
 }
 
 func NewChatMethods(agents *agent.Router, sess store.SessionStore, cfg *config.Config, rl *gateway.RateLimiter, eventBus bus.EventPublisher) *ChatMethods {
-	return &ChatMethods{agents: agents, sessions: sess, cfg: cfg, rateLimiter: rl, eventBus: eventBus}
+	return &ChatMethods{
+		agents:          agents,
+		sessions:        sess,
+		cfg:             cfg,
+		rateLimiter:     rl,
+		eventBus:        eventBus,
+		userConcurrency: scheduler.NewUserConcurrencyLimiter(scheduler.DefaultMaxRunsPerUser),
+	}
 }
 
 // SetPostTurnProcessor sets the post-turn processor for team task dispatch.
@@ -212,6 +221,13 @@ func (m *ChatMethods) handleSend(ctx context.Context, client *gateway.Client, re
 	// and defers task dispatch to post-turn.
 	runCtxBase, drainTeamDispatch := tools.InjectTeamDispatch(runCtxBase, m.postTurn)
 
+	// Per-user concurrency limit: prevent a single user from overwhelming the system.
+	userRelease, err := m.userConcurrency.Acquire(userID)
+	if err != nil {
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInvalidRequest, err.Error()))
+		return
+	}
+
 	// Create cancellable context for abort support (matching TS AbortController pattern).
 	runCtx, cancel := context.WithCancel(runCtxBase)
 	injectCh := m.agents.RegisterRun(runID, sessionKey, params.AgentID, cancel)
@@ -221,6 +237,7 @@ func (m *ChatMethods) handleSend(ctx context.Context, client *gateway.Client, re
 		defer m.agents.UnregisterRun(runID)
 		defer cancel()
 		defer drainTeamDispatch() // dispatch pending team tasks + release lock (even on panic)
+		defer userRelease()       // decrement per-user concurrency counter
 
 		// Parse media items (supports both legacy string paths and new {path,filename} objects).
 		items := params.parseMedia()
