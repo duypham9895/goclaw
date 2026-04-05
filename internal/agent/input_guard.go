@@ -92,6 +92,19 @@ func (g *InputGuard) PatternNames() []string {
 	return names
 }
 
+// Sanitize replaces all matched injection patterns in content with [FILTERED].
+// Returns the sanitized content. If no patterns match, returns content unchanged.
+func (g *InputGuard) Sanitize(content string) string {
+	if content == "" || len(g.patterns) == 0 {
+		return content
+	}
+	result := content
+	for _, gp := range g.patterns {
+		result = gp.pattern.ReplaceAllString(result, "[FILTERED]")
+	}
+	return result
+}
+
 // ContainsNullBytes is a fast check for null bytes without regex overhead.
 func ContainsNullBytes(s string) bool {
 	return strings.ContainsRune(s, 0)
