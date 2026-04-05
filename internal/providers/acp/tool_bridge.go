@@ -179,7 +179,23 @@ func (tb *ToolBridge) resolvePath(path string) (string, error) {
 	// Resolve symlinks for the target (may not exist yet for writes)
 	real, err := filepath.EvalSymlinks(cleaned)
 	if err != nil {
-		real = cleaned // file may not exist yet — validate parent
+		// File doesn't exist yet (new file write). Resolve the parent directory
+		// to prevent TOCTOU race where a symlink could be created between
+		// validation and the actual write operation.
+		parentDir := filepath.Dir(cleaned)
+		resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
+		if parentErr != nil {
+			return "", fmt.Errorf("cannot resolve parent directory: %w", parentErr)
+		}
+		wsReal, _ := filepath.EvalSymlinks(tb.workspace)
+		if wsReal == "" {
+			wsReal = tb.workspace
+		}
+		if resolvedParent != wsReal && !strings.HasPrefix(resolvedParent, wsReal+string(filepath.Separator)) {
+			slog.Warn("security.acp_path_escape", "path", path, "resolved_parent", resolvedParent, "workspace", wsReal)
+			return "", fmt.Errorf("parent directory escapes workspace")
+		}
+		return filepath.Join(resolvedParent, filepath.Base(cleaned)), nil
 	}
 	wsReal, _ := filepath.EvalSymlinks(tb.workspace)
 	if wsReal == "" {
