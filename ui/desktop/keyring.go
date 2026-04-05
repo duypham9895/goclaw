@@ -4,12 +4,14 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 
+	"github.com/nextlevelbuilder/goclaw/internal/crypto"
 	"github.com/zalando/go-keyring"
 )
 
@@ -75,14 +77,37 @@ func secretsDir() string {
 	return dir
 }
 
+// machineKey derives a deterministic encryption key from machine-specific attributes.
+// Not perfect (hostname can change) but significantly better than plaintext storage.
+func machineKey() string {
+	hostname, _ := os.Hostname()
+	home, _ := os.UserHomeDir()
+	h := sha256.Sum256([]byte(hostname + home + "goclaw-desktop-salt"))
+	return hex.EncodeToString(h[:])
+}
+
 func readSecretFile(key string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(secretsDir(), key))
 	if err != nil {
 		return "", err
 	}
-	return string(data), nil
+
+	raw := string(data)
+	// Decrypt using machine-derived key.
+	decrypted, err := crypto.Decrypt(raw, machineKey())
+	if err != nil {
+		// If decryption fails, the file may be legacy plaintext or corrupted.
+		slog.Warn("keyring: failed to decrypt secret file, treating as raw", "key", key, "error", err)
+		return raw, nil
+	}
+	return decrypted, nil
 }
 
 func writeSecretFile(key, value string) error {
-	return os.WriteFile(filepath.Join(secretsDir(), key), []byte(value), 0600)
+	// Encrypt using machine-derived key before writing.
+	encrypted, err := crypto.Encrypt(value, machineKey())
+	if err != nil {
+		return fmt.Errorf("encrypt secret: %w", err)
+	}
+	return os.WriteFile(filepath.Join(secretsDir(), key), []byte(encrypted), 0600)
 }
