@@ -247,6 +247,9 @@ func wrapMCPContent(content, serverName, toolName string) string {
 	content = strings.ReplaceAll(content, "<<<EXTERNAL_UNTRUSTED_CONTENT>>>", "[[MARKER_SANITIZED]]")
 	content = strings.ReplaceAll(content, "<<<END_EXTERNAL_UNTRUSTED_CONTENT>>>", "[[END_MARKER_SANITIZED]]")
 
+	// Strip common LLM injection patterns from MCP server responses
+	content = tools.StripInjectionPatterns(content)
+
 	var sb strings.Builder
 	sb.WriteString("<<<EXTERNAL_UNTRUSTED_CONTENT>>>\n")
 	sb.WriteString("Source: MCP Server ")
