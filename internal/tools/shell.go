@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -199,6 +201,17 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *Result {
 		}
 	}
 
+	// Write-then-execute defense: if the command references a script file in the
+	// workspace, scan its content against deny patterns. This prevents bypassing
+	// shell deny rules by writing dangerous commands to a file and then executing it.
+	cwd := ToolWorkspaceFromCtx(ctx)
+	if cwd == "" {
+		cwd = t.workspace
+	}
+	if err := checkScriptContent(cwd, normalizedCommand, allPatterns); err != nil {
+		return ErrorResult(err.Error())
+	}
+
 	// Memory path hint: shell commands can't access DB-backed memory files.
 	if hint := MaybeMemoryExecHint(normalizedCommand); hint != "" {
 		return SilentResult(hint)
@@ -377,6 +390,70 @@ func (t *ExecTool) executeInSandbox(ctx context.Context, command, cwd, sandboxKe
 	}
 
 	return SilentResult(capExecOutput(output, execMaxOutputChars))
+}
+
+// scriptExts are file extensions that may contain executable shell/script content.
+// Only these are scanned for deny pattern bypass via write-then-execute.
+var scriptExts = map[string]bool{
+	".sh": true, ".bash": true, ".zsh": true,
+	".py": true, ".py3": true,
+	".js": true, ".mjs": true, ".cjs": true,
+	".rb": true, ".pl": true, ".php": true,
+}
+
+// scriptMaxScanBytes is the maximum bytes to read from a script file for deny pattern scanning.
+// Keeps the check lightweight — most injection payloads appear early in the file.
+const scriptMaxScanBytes = 8192
+
+// checkScriptContent scans script files referenced in a command against deny patterns.
+// This prevents the write-then-execute bypass: an agent writes dangerous commands
+// to a .sh/.py/.js file using write_file, then executes it via exec to avoid
+// the deny pattern check on the command string itself.
+func checkScriptContent(workspace, command string, denyPatterns []*regexp.Regexp) error {
+	fields := strings.Fields(command)
+	for _, field := range fields {
+		ext := strings.ToLower(filepath.Ext(field))
+		if !scriptExts[ext] {
+			continue
+		}
+
+		// Resolve relative paths against workspace.
+		scriptPath := field
+		if !filepath.IsAbs(scriptPath) {
+			scriptPath = filepath.Join(workspace, scriptPath)
+		}
+		scriptPath = filepath.Clean(scriptPath)
+
+		// Only scan files inside the workspace (avoid scanning system files).
+		absWorkspace, _ := filepath.Abs(workspace)
+		absScript, _ := filepath.Abs(scriptPath)
+		if !strings.HasPrefix(absScript, absWorkspace+string(filepath.Separator)) && absScript != absWorkspace {
+			continue
+		}
+
+		f, err := os.Open(scriptPath)
+		if err != nil {
+			continue // file doesn't exist or can't be read — not a bypass risk
+		}
+		buf := make([]byte, scriptMaxScanBytes)
+		n, _ := f.Read(buf)
+		f.Close()
+		if n == 0 {
+			continue
+		}
+
+		content := normalizeCommand(string(buf[:n]))
+		for _, pattern := range denyPatterns {
+			if pattern.MatchString(content) {
+				slog.Warn("security.script_content_denied",
+					"script", field,
+					"pattern", pattern.String(),
+				)
+				return fmt.Errorf("script file %q contains denied command pattern: %s", field, pattern.String())
+			}
+		}
+	}
+	return nil
 }
 
 // limitedBuffer caps output to prevent OOM from runaway commands.
