@@ -264,13 +264,8 @@ func (t *WebFetchTool) fetchRawContent(ctx context.Context, rawURL, extractMode 
 
 	redirectCount := 0
 	client := &http.Client{
-		Timeout: time.Duration(fetchTimeoutSeconds) * time.Second,
-		Transport: &http.Transport{
-			ForceAttemptHTTP2:   true,
-			MaxIdleConns:        10,
-			IdleConnTimeout:     30 * time.Second,
-			TLSHandshakeTimeout: 15 * time.Second,
-		},
+		Timeout:   time.Duration(fetchTimeoutSeconds) * time.Second,
+		Transport: NewSSRFSafeTransport(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			redirectCount++
 			if redirectCount > defaultFetchMaxRedirect {
