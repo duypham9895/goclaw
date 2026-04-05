@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -197,6 +199,55 @@ func CheckSSRF(rawURL string) error {
 	}
 
 	return nil
+}
+
+// --- SSRF-Safe Transport ---
+
+// NewSSRFSafeTransport returns an *http.Transport with a custom DialContext that
+// validates resolved IPs at connection time, preventing DNS rebinding TOCTOU attacks.
+// The pre-check in CheckSSRF remains as a fast-fail, but this transport provides
+// the real protection by pinning DNS resolution to the actual connection.
+func NewSSRFSafeTransport() *http.Transport {
+	return &http.Transport{
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        10,
+		IdleConnTimeout:     30 * time.Second,
+		TLSHandshakeTimeout: 15 * time.Second,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+
+			if isBlockedHostname(host) {
+				return nil, fmt.Errorf("blocked hostname: %s", host)
+			}
+
+			// If already an IP, check directly
+			if ip := net.ParseIP(host); ip != nil {
+				if isPrivateIP(host) {
+					return nil, fmt.Errorf("private IP not allowed: %s", host)
+				}
+				return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, addr)
+			}
+
+			// Resolve DNS and validate all results before connecting
+			ips, err := net.DefaultResolver.LookupHost(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("DNS resolution failed for %s: %w", host, err)
+			}
+
+			for _, ip := range ips {
+				if isPrivateIP(ip) {
+					return nil, fmt.Errorf("SSRF: %s resolves to private IP %s", host, ip)
+				}
+			}
+
+			// Connect to the first resolved IP (pinned), preventing rebinding
+			pinnedAddr := net.JoinHostPort(ips[0], port)
+			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, pinnedAddr)
+		},
+	}
 }
 
 // --- External Content Wrapping (matching TS src/security/external-content.ts) ---
