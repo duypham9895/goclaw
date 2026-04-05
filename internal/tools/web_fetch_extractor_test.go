@@ -299,6 +299,7 @@ func TestInProcessExtractor_HTML(t *testing.T) {
 	defer server.Close()
 
 	tool := NewWebFetchTool(WebFetchConfig{})
+	tool.transport = http.DefaultTransport // bypass SSRF check for localhost test server
 	ext := &InProcessExtractor{tool: tool}
 	result, err := ext.Extract(context.Background(), server.URL)
 	if err != nil {
@@ -320,6 +321,7 @@ func TestInProcessExtractor_JSON(t *testing.T) {
 	defer server.Close()
 
 	tool := NewWebFetchTool(WebFetchConfig{})
+	tool.transport = http.DefaultTransport // bypass SSRF check for localhost test server
 	ext := &InProcessExtractor{tool: tool}
 	result, err := ext.Extract(context.Background(), server.URL)
 	if err != nil {
