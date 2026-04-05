@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -268,10 +269,30 @@ const (
   - Send messages to third parties`
 )
 
+// injectionPatterns matches common LLM prompt injection patterns in external content.
+// Compiled once at package init for performance.
+var injectionPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|rules?|prompts?)`),
+	regexp.MustCompile(`(?i)(you are now|from now on you are|pretend you are)\s+`),
+	regexp.MustCompile(`(?i)</?system>|\[SYSTEM\]|\[INST\]|<<SYS>>`),
+	regexp.MustCompile(`(?i)(new instructions?:|override:|system prompt:)`),
+}
+
+// StripInjectionPatterns removes common LLM injection patterns from external content,
+// replacing them with a sanitization marker. Exported for use by other packages (e.g. MCP).
+func StripInjectionPatterns(content string) string {
+	result := content
+	for _, p := range injectionPatterns {
+		result = p.ReplaceAllString(result, "[INJECTION_PATTERN_REMOVED]")
+	}
+	return result
+}
+
 // wrapExternalContent wraps content with security markers.
 // source is "Web Search" or "Web Fetch".
 func wrapExternalContent(content, source string, includeWarning bool) string {
 	content = sanitizeMarkers(content)
+	content = StripInjectionPatterns(content)
 
 	var sb strings.Builder
 	if includeWarning {
