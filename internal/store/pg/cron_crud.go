@@ -13,6 +13,14 @@ import (
 )
 
 func (s *PGCronStore) AddJob(ctx context.Context, name string, schedule store.CronSchedule, message string, deliver bool, channel, to, agentID, userID string) (*store.CronJob, error) {
+	// Per-user job count limit.
+	if userID != "" {
+		existing := s.ListJobs(ctx, true, "", userID)
+		if len(existing) >= store.MaxJobsPerUser {
+			return nil, store.ErrCronJobLimitExceeded
+		}
+	}
+
 	// Apply default timezone for cron expressions when not set per-job.
 	if schedule.TZ == "" && schedule.Kind == "cron" && s.defaultTZ != "" {
 		schedule.TZ = s.defaultTZ
