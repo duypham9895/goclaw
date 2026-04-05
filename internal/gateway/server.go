@@ -111,24 +111,60 @@ func NewServer(cfg *config.Config, eventPub bus.EventPublisher, agents *agent.Ro
 func (s *Server) RateLimiter() *RateLimiter { return s.rateLimiter }
 
 // checkOrigin validates WebSocket connection origin against the allowed origins whitelist.
-// If no origins are configured, all origins are allowed (backward compatibility / dev mode).
+//
+// Behavior by configuration:
+//   - AllowedOrigins configured: use the explicit allowlist.
+//   - No AllowedOrigins, no gateway token (dev mode): allow all origins (backward compat).
+//   - No AllowedOrigins, gateway token set (production intent): same-origin only
+//     (Origin header must match the Host header).
+//
 // Empty Origin header (non-browser clients like CLI/SDK) is always allowed.
 func (s *Server) checkOrigin(r *http.Request) bool {
 	allowed := s.cfg.Gateway.AllowedOrigins
-	if len(allowed) == 0 {
-		return true // no config = allow all (backward compat)
-	}
 	origin := r.Header.Get("Origin")
+
+	// Non-browser clients (CLI, SDK, channels) — always allowed.
 	if origin == "" {
-		return true // non-browser clients (CLI, SDK, channels)
+		return true
 	}
-	for _, a := range allowed {
-		if origin == a || a == "*" {
-			return true
+
+	// Explicit allowlist configured — use it.
+	if len(allowed) > 0 {
+		for _, a := range allowed {
+			if origin == a || a == "*" {
+				return true
+			}
 		}
+		slog.Warn("security.cors_rejected", "origin", origin)
+		return false
 	}
-	slog.Warn("security.cors_rejected", "origin", origin)
+
+	// No allowlist configured: dev mode (no token) allows all.
+	if s.cfg.Gateway.Token == "" {
+		return true
+	}
+
+	// Production intent (token set, no allowlist): enforce same-origin.
+	// Strip scheme from Origin to compare against Host header.
+	if isSameOrigin(origin, r.Host) {
+		return true
+	}
+	slog.Warn("security.cors_rejected_same_origin", "origin", origin, "host", r.Host)
 	return false
+}
+
+// isSameOrigin checks whether the Origin header refers to the same host as the
+// request Host header. Origin is a full URL (e.g. "https://example.com:8080"),
+// while Host is just host[:port].
+func isSameOrigin(origin, host string) bool {
+	// Extract host from origin URL by stripping the scheme.
+	originHost := origin
+	if idx := strings.Index(origin, "://"); idx >= 0 {
+		originHost = origin[idx+3:]
+	}
+	// Remove trailing slash if present.
+	originHost = strings.TrimRight(originHost, "/")
+	return originHost == host
 }
 
 // BuildMux creates and caches the HTTP mux with all routes registered.
@@ -300,6 +336,14 @@ func (s *Server) Start(ctx context.Context) error {
 	var handler http.Handler = mux
 	if os.Getenv("GOCLAW_DESKTOP") == "1" {
 		handler = desktopCORS(mux)
+	}
+
+	// Warn if token is set but no allowed origins — same-origin enforcement active.
+	if s.cfg.Gateway.Token != "" && len(s.cfg.Gateway.AllowedOrigins) == 0 {
+		slog.Warn("security.no_allowed_origins",
+			"msg", "Gateway token is set but allowed_origins is not configured. "+
+				"WebSocket connections will be restricted to same-origin only. "+
+				"Set allowed_origins in gateway config to allow specific origins.")
 	}
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Gateway.Host, s.cfg.Gateway.Port)
