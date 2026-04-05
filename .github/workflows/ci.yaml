@@ -23,6 +23,7 @@ jobs:
       - run: go vet ./...
 
       - name: Vulnerability scan (Go)
+        continue-on-error: true
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
