@@ -32,6 +32,7 @@ type WebFetchTool struct {
 	policy         string   // "allow_all" (default), "allowlist"
 	allowedDomains []string // domains when policy="allowlist" (supports "*.example.com")
 	blockedDomains []string // always checked regardless of policy (supports "*.example.com")
+	transport      http.RoundTripper // nil = NewSSRFSafeTransport(); override for tests
 	mu             sync.RWMutex
 }
 
@@ -263,9 +264,13 @@ func (t *WebFetchTool) fetchRawContent(ctx context.Context, rawURL, extractMode 
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
 	redirectCount := 0
+	transport := t.transport
+	if transport == nil {
+		transport = NewSSRFSafeTransport()
+	}
 	client := &http.Client{
 		Timeout:   time.Duration(fetchTimeoutSeconds) * time.Second,
-		Transport: NewSSRFSafeTransport(),
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			redirectCount++
 			if redirectCount > defaultFetchMaxRedirect {
