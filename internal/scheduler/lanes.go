@@ -11,6 +11,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -224,6 +225,67 @@ func (lm *LaneManager) StopAll() {
 		slog.Info("stopping lane", "name", name)
 		lane.Stop()
 	}
+}
+
+// DefaultMaxRunsPerUser is the default maximum concurrent agent runs per user.
+const DefaultMaxRunsPerUser = 5
+
+// UserConcurrencyLimiter tracks per-user concurrent run counts and enforces limits.
+type UserConcurrencyLimiter struct {
+	maxPerUser int
+	counts     sync.Map // map[string]*atomic.Int64
+}
+
+// NewUserConcurrencyLimiter creates a limiter with the given per-user max.
+// If max <= 0, DefaultMaxRunsPerUser is used.
+func NewUserConcurrencyLimiter(max int) *UserConcurrencyLimiter {
+	if max <= 0 {
+		max = DefaultMaxRunsPerUser
+	}
+	return &UserConcurrencyLimiter{maxPerUser: max}
+}
+
+// Acquire attempts to reserve a run slot for the given user.
+// Returns a release function and nil on success, or an error if the user
+// has reached the concurrency limit.
+func (u *UserConcurrencyLimiter) Acquire(userID string) (release func(), err error) {
+	if userID == "" {
+		// No user ID — skip limiting (e.g. system/cron runs).
+		return func() {}, nil
+	}
+
+	counter := u.getCounter(userID)
+	current := counter.Add(1)
+	if current > int64(u.maxPerUser) {
+		counter.Add(-1)
+		return nil, fmt.Errorf("user %s has reached the maximum of %d concurrent runs", userID, u.maxPerUser)
+	}
+
+	released := atomic.Bool{}
+	return func() {
+		if released.CompareAndSwap(false, true) {
+			counter.Add(-1)
+		}
+	}, nil
+}
+
+// ActiveRuns returns the current number of concurrent runs for a user.
+func (u *UserConcurrencyLimiter) ActiveRuns(userID string) int {
+	counter := u.getCounter(userID)
+	return int(counter.Load())
+}
+
+func (u *UserConcurrencyLimiter) getCounter(userID string) *atomic.Int64 {
+	val, ok := u.counts.Load(userID)
+	if ok {
+		return val.(*atomic.Int64)
+	}
+	counter := &atomic.Int64{}
+	actual, loaded := u.counts.LoadOrStore(userID, counter)
+	if loaded {
+		return actual.(*atomic.Int64)
+	}
+	return counter
 }
 
 // AllStats returns utilization for all lanes.
