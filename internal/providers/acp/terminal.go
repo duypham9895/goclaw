@@ -60,8 +60,12 @@ func (cb *cappedBuffer) String() string {
 // allowedTerminalBinaries lists binaries that ACP agents may execute.
 // All commands run via exec.CommandContext (no shell interpretation),
 // so this restricts which programs can be spawned as subprocesses.
+//
+// Shell binaries (sh, bash, zsh, fish) are intentionally excluded because
+// they can execute arbitrary commands via -c, effectively bypassing the
+// allowlist. Commands requiring shell access should be routed through the
+// main exec tool which enforces deny pattern checks on the full command.
 var allowedTerminalBinaries = map[string]bool{
-	"sh": true, "bash": true, "zsh": true, "fish": true,
 	"node": true, "python": true, "python3": true, "ruby": true, "perl": true,
 	"go": true, "cargo": true, "rustc": true, "gcc": true, "g++": true, "make": true,
 	"git": true, "ls": true, "cat": true, "head": true, "tail": true,
