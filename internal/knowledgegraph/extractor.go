@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
@@ -122,13 +123,18 @@ func (e *Extractor) extractChunk(ctx context.Context, text string) (*ExtractionR
 		return nil, fmt.Errorf("parse extraction result: %w", err)
 	}
 
-	// Filter by confidence threshold and normalize
+	// Filter by confidence threshold, normalize, and sanitize.
 	filtered := &ExtractionResult{}
 	for _, ent := range result.Entities {
 		if ent.Confidence >= e.minConfidence {
 			ent.ExternalID = strings.ToLower(strings.TrimSpace(ent.ExternalID))
-			ent.Name = strings.TrimSpace(ent.Name)
+			ent.Name = sanitizeEntityField(ent.Name, maxEntityNameLen)
 			ent.EntityType = strings.ToLower(strings.TrimSpace(ent.EntityType))
+			ent.Description = sanitizeEntityField(ent.Description, maxEntityDescLen)
+			if ent.Name == "" {
+				slog.Debug("kg extraction: skipping entity with empty name after sanitization")
+				continue
+			}
 			filtered.Entities = append(filtered.Entities, ent)
 		}
 	}
@@ -141,6 +147,60 @@ func (e *Extractor) extractChunk(ctx context.Context, text string) (*ExtractionR
 		}
 	}
 	return filtered, nil
+}
+
+const (
+	maxEntityNameLen = 200
+	maxEntityDescLen = 2000
+)
+
+// reHTMLTags matches XML/HTML tags for stripping from entity fields.
+var reHTMLTags = regexp.MustCompile(`<[^>]+>`)
+
+// injectionPatterns are common prompt injection / command injection indicators
+// that should not appear in entity names or descriptions.
+var injectionPatterns = []string{
+	"<script", "</script", "javascript:", "onerror=", "onload=",
+	"{{", "}}", "${", "$(", "eval(", "exec(",
+	"UNION SELECT", "DROP TABLE", "INSERT INTO", "DELETE FROM",
+	"--", "/*", "*/",
+}
+
+// sanitizeEntityField strips HTML tags, truncates to maxLen, and checks for
+// injection patterns in extracted KG entity/relation fields.
+func sanitizeEntityField(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	// Strip HTML/XML tags.
+	s = reHTMLTags.ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
+
+	// Truncate to max length.
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+
+	// Check for injection patterns — log and strip if found.
+	lower := strings.ToLower(s)
+	for _, pat := range injectionPatterns {
+		if strings.Contains(lower, strings.ToLower(pat)) {
+			slog.Warn("kg extraction: injection pattern detected in entity field",
+				"pattern", pat,
+				"field_preview", truncatePreview(s, 100),
+			)
+			// Remove the pattern occurrence.
+			s = strings.ReplaceAll(s, pat, "")
+		}
+	}
+
+	return strings.TrimSpace(s)
+}
+
+// truncatePreview returns the first n characters of s for logging.
+func truncatePreview(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // sanitizeJSON fixes common LLM JSON issues while preserving string values.
