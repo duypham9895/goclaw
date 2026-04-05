@@ -148,9 +148,9 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 				p1, err1 := c.pairingService.IsPaired(ctx, userID, c.Name())
 				p2, err2 := c.pairingService.IsPaired(ctx, senderID, c.Name())
 				if err1 != nil || err2 != nil {
-					slog.Warn("security.pairing_check_failed, assuming paired (fail-open)",
+					slog.Error("security.pairing_check_failed",
 						"user_id", userID, "channel", c.Name(), "err1", err1, "err2", err2)
-					paired = true
+					paired = false
 				} else {
 					paired = p1 || p2
 				}
@@ -254,9 +254,9 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 					groupSenderID := fmt.Sprintf("group:%d", chatID)
 					paired, pairErr := c.pairingService.IsPaired(ctx, groupSenderID, c.Name())
 					if pairErr != nil {
-						slog.Warn("security.pairing_check_failed, assuming paired (fail-open)",
+						slog.Error("security.pairing_check_failed",
 							"group_sender", groupSenderID, "channel", c.Name(), "error", pairErr)
-						paired = true
+						paired = false
 					}
 					if paired {
 						c.approvedGroups.Store(chatIDStr, true)
@@ -309,9 +309,9 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 					groupSenderID := fmt.Sprintf("group:%d", chatID)
 					paired, pairErr := c.pairingService.IsPaired(ctx, groupSenderID, c.Name())
 					if pairErr != nil {
-						slog.Warn("security.pairing_check_failed, assuming paired (fail-open)",
+						slog.Error("security.pairing_check_failed",
 							"group_sender", groupSenderID, "channel", c.Name(), "error", pairErr)
-						paired = true
+						paired = false
 					}
 					if paired {
 						c.approvedGroups.Store(chatIDStr, true)
@@ -356,9 +356,9 @@ func (c *Channel) handleMessage(ctx context.Context, update telego.Update) {
 			groupSenderID := fmt.Sprintf("group:%d", chatID)
 			paired, err := c.pairingService.IsPaired(ctx, groupSenderID, c.Name())
 			if err != nil {
-				slog.Warn("security.pairing_check_failed, assuming paired (fail-open)",
+				slog.Error("security.pairing_check_failed",
 					"group_sender", groupSenderID, "channel", c.Name(), "error", err)
-				paired = true
+				paired = false
 			}
 			if paired {
 				c.approvedGroups.Store(chatIDStr, true)

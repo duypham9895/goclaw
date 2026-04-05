@@ -138,9 +138,9 @@ func (c *Channel) checkDMPolicy(ctx context.Context, senderID, channelID string)
 		if c.pairingService != nil {
 			paired, err := c.pairingService.IsPaired(ctx, senderID, c.Name())
 			if err != nil {
-				slog.Warn("security.pairing_check_failed, assuming paired (fail-open)",
+				slog.Error("security.pairing_check_failed",
 					"sender_id", senderID, "channel", c.Name(), "error", err)
-				return true
+				// fall through to pairing reply (fail-closed)
 			}
 			if paired {
 				return true
@@ -180,9 +180,9 @@ func (c *Channel) checkGroupPolicy(ctx context.Context, senderID, channelID stri
 		if c.pairingService != nil {
 			paired, err := c.pairingService.IsPaired(ctx, groupSenderID, c.Name())
 			if err != nil {
-				slog.Warn("security.pairing_check_failed, assuming paired (fail-open)",
+				slog.Error("security.pairing_check_failed",
 					"group_sender", groupSenderID, "channel", c.Name(), "error", err)
-				paired = true
+				paired = false
 			}
 			if paired {
 				c.approvedGroups.Store(channelID, true)
