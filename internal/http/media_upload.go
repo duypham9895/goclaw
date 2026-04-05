@@ -11,6 +11,7 @@ import (
 
 	"github.com/nextlevelbuilder/goclaw/internal/channels/media"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
+	"github.com/nextlevelbuilder/goclaw/internal/tools"
 )
 
 const (
@@ -61,6 +62,12 @@ func (h *MediaUploadHandler) handleUpload(w http.ResponseWriter, r *http.Request
 	ext := filepath.Ext(origName)
 	if ext == "" {
 		ext = ".bin"
+	}
+
+	// Block dangerous executable file extensions.
+	if tools.IsBlockedExtension(ext) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file type not allowed"})
+		return
 	}
 
 	// Save to temp with unique name.
