@@ -22,6 +22,11 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
 
+      - name: Vulnerability scan (Go)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
   web:
     runs-on: ubuntu-latest
     defaults:
@@ -39,3 +44,7 @@ jobs:
           cache-dependency-path: ui/web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+
+      - name: Vulnerability scan (Web UI)
+        working-directory: ui/web
+        run: pnpm audit --audit-level=high || true
