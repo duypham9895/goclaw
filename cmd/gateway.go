@@ -152,6 +152,24 @@ func runGateway() {
 		slog.Warn("sessions.dm_scope config is deprecated and ignored — fixed to per-channel-peer", "configured", cfg.Sessions.DmScope)
 	}
 
+	// Security posture warnings: alert operators when security features are relaxed
+	// in production-like environments (token configured = multi-user / exposed deployment).
+	if cfg.Gateway.Token != "" {
+		sbMode := ""
+		if cfg.Agents.Defaults.Sandbox != nil {
+			sbMode = cfg.Agents.Defaults.Sandbox.Mode
+		}
+		if sbMode == "" || sbMode == "off" {
+			slog.Warn("security.sandbox_disabled_with_token",
+				"msg", "Sandbox is OFF but gateway token is set. LLM shell commands run directly on host. Set sandbox.mode='all' for production use.")
+		}
+		if cfg.Gateway.InjectionAction != "block" {
+			slog.Warn("security.injection_guard_not_blocking",
+				"msg", "Injection guard is not set to 'block'. Prompt injections will be logged but not stopped. Set gateway.injection_action='block' for production use.",
+				"current_action", cfg.Gateway.InjectionAction)
+		}
+	}
+
 	seedSystemConfigs(pgStores.SystemConfigs, pgStores.Tenants, cfg)
 	// Read back system_configs from DB and overlay onto in-memory config.
 	// This ensures runtime components read DB values via cfg.* without needing direct DB access.
