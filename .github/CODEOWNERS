@@ -1,0 +1,7 @@
+# Security-sensitive files require maintainer review
+/.github/ @nextlevelbuilder
+/internal/crypto/ @nextlevelbuilder
+/internal/tools/shell*.go @nextlevelbuilder
+/internal/sandbox/ @nextlevelbuilder
+/Dockerfile* @nextlevelbuilder
+/docker-entrypoint.sh @nextlevelbuilder
