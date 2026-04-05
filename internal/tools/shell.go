@@ -255,7 +255,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *Result {
 
 	// Use per-user workspace from context if available, fallback to struct field.
 	// The context workspace is tenant-scoped; t.workspace is the global (master) workspace.
-	cwd := ToolWorkspaceFromCtx(ctx)
+	cwd = ToolWorkspaceFromCtx(ctx)
 	if cwd == "" {
 		cwd = t.workspace
 	}
