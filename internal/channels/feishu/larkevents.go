@@ -85,7 +85,17 @@ type webhookEvent struct {
 // NewWebhookHandler creates an http.HandlerFunc that handles Feishu webhook events.
 // Supports: URL verification challenge, event decryption, and message dispatch.
 func NewWebhookHandler(verificationToken, encryptKey string, onMessage func(event *MessageEvent)) http.HandlerFunc {
+	if verificationToken == "" {
+		slog.Warn("security.feishu_verification_token_empty: all webhook requests will be rejected until a verification_token is configured")
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
+		if verificationToken == "" {
+			slog.Error("security.feishu_webhook_rejected: verification_token is not configured")
+			http.Error(w, "webhook verification not configured", http.StatusForbidden)
+			return
+		}
+
 		if r.Method != "POST" {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -137,10 +147,10 @@ func NewWebhookHandler(verificationToken, encryptKey string, onMessage func(even
 			return
 		}
 
-		// Verify token if configured
-		if verificationToken != "" && event.Header.Token != verificationToken {
-			slog.Warn("feishu webhook token mismatch")
-			w.WriteHeader(http.StatusOK)
+		// Verify token (mandatory — empty token case rejected at handler entry)
+		if event.Header.Token != verificationToken {
+			slog.Error("security.feishu_webhook_token_mismatch", "event_id", event.Header.EventID)
+			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 

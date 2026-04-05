@@ -69,6 +69,10 @@ func New(cfg config.FeishuConfig, msgBus *bus.MessageBus, pairingSvc store.Pairi
 		return nil, fmt.Errorf("feishu app_id and app_secret are required")
 	}
 
+	if cfg.ConnectionMode == "webhook" && cfg.VerificationToken == "" {
+		slog.Warn("security.feishu_missing_verification_token: webhook mode requires verification_token — all webhook requests will be rejected")
+	}
+
 	// Resolve domain
 	domain := resolveDomain(cfg.Domain)
 
