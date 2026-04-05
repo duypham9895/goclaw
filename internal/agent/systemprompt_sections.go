@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -147,6 +148,38 @@ func buildTimeSection() []string {
 		fmt.Sprintf("Current date: %s (UTC)", now.UTC().Format("2006-01-02 Monday")),
 		"",
 	}
+}
+
+// sanitizeContextFiles returns a new slice of context files with injection
+// patterns filtered from their content. Does not mutate the input slice.
+// Returns the original slice unchanged if guard is nil.
+func sanitizeContextFiles(files []bootstrap.ContextFile, guard *InputGuard) []bootstrap.ContextFile {
+	if guard == nil || len(files) == 0 {
+		return files
+	}
+	result := make([]bootstrap.ContextFile, len(files))
+	for i, f := range files {
+		result[i] = bootstrap.ContextFile{
+			Path:    f.Path,
+			Content: sanitizeContextFileContent(f.Content, guard),
+		}
+	}
+	return result
+}
+
+// sanitizeContextFileContent scans context file content for injection patterns
+// and replaces matches with [FILTERED]. This prevents prompt injection via
+// user-editable context files (e.g. USER.md, custom context files).
+func sanitizeContextFileContent(content string, guard *InputGuard) string {
+	if guard == nil || content == "" {
+		return content
+	}
+	matches := guard.Scan(content)
+	if len(matches) > 0 {
+		slog.Warn("security.context_file_injection_detected", "patterns", matches)
+		return guard.Sanitize(content)
+	}
+	return content
 }
 
 func buildProjectContextSection(files []bootstrap.ContextFile, agentType string) []string {

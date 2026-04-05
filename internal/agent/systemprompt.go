@@ -88,6 +88,10 @@ type SystemPromptConfig struct {
 	// Bootstrap mode: BOOTSTRAP.md is present — slim prompt with only write_file tool.
 	// Skips skills, MCP, team workspace, spawn, sandbox, self-evolve, recency reminders.
 	IsBootstrap bool
+
+	// InputGuard scans context file content for injection patterns before insertion.
+	// nil = no scanning (backward compatible).
+	InputGuard *InputGuard
 }
 
 // coreToolSummaries maps tool names to one-line descriptions.
@@ -202,9 +206,13 @@ func BuildSystemPrompt(cfg SystemPromptConfig) string {
 		)
 	}
 
+	// 1.7. Sanitize context file content before injection into system prompt.
+	// Prevents prompt injection via user-editable context files.
+	sanitizedFiles := sanitizeContextFiles(cfg.ContextFiles, cfg.InputGuard)
+
 	// 1.7. # Persona — SOUL.md + IDENTITY.md injected early (primacy zone)
 	// These define how the agent behaves and must not drift in long conversations.
-	personaFiles, otherFiles := splitPersonaFiles(cfg.ContextFiles)
+	personaFiles, otherFiles := splitPersonaFiles(sanitizedFiles)
 	if len(personaFiles) > 0 {
 		lines = append(lines, buildPersonaSection(personaFiles, cfg.AgentType)...)
 	}
