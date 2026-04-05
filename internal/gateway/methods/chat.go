@@ -183,12 +183,28 @@ func (m *ChatMethods) handleSend(ctx context.Context, client *gateway.Client, re
 		sessionKey = sessions.BuildWSSessionKey(params.AgentID, uuid.NewString())
 	}
 
-	// Ownership check: when resuming an existing session, verify the caller owns it.
-	// Skip for new sessions (Get returns nil) so first-message creation is not blocked.
-	if params.SessionKey != "" && !canSeeAll(client.Role(), m.cfg.Gateway.OwnerIDs, userID) {
-		if sess := m.sessions.Get(ctx, sessionKey); sess != nil && sess.UserID != userID {
-			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrUnauthorized, i18n.T(locale, i18n.MsgPermissionDenied, "session")))
-			return
+	// Session ownership enforcement:
+	// - Existing session: verify the caller owns it (or is admin).
+	// - New session with user-provided key: eagerly bind to the creating user
+	//   so no other user can claim it in a race window.
+	if params.SessionKey != "" {
+		existingSess := m.sessions.Get(ctx, sessionKey)
+		if existingSess != nil {
+			// Existing session: ownership check.
+			if !canSeeAll(client.Role(), m.cfg.Gateway.OwnerIDs, userID) && existingSess.UserID != userID {
+				client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrUnauthorized, i18n.T(locale, i18n.MsgPermissionDenied, "session")))
+				return
+			}
+		} else {
+			// New session with user-provided key: eagerly bind to creator.
+			sess := m.sessions.GetOrCreate(ctx, sessionKey)
+			if sess.UserID == "" && userID != "" {
+				m.sessions.SetAgentInfo(ctx, sessionKey, uuid.Nil, userID)
+			} else if sess.UserID != "" && sess.UserID != userID && !canSeeAll(client.Role(), m.cfg.Gateway.OwnerIDs, userID) {
+				// Race: another user already claimed this key.
+				client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrUnauthorized, i18n.T(locale, i18n.MsgPermissionDenied, "session")))
+				return
+			}
 		}
 	}
 
