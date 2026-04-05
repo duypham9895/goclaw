@@ -304,9 +304,9 @@ func (c *Channel) checkDMPolicy(ctx context.Context, senderID, chatID string) bo
 		if c.pairingService != nil {
 			p, err := c.pairingService.IsPaired(ctx, senderID, c.Name())
 			if err != nil {
-				slog.Warn("security.pairing_check_failed, assuming paired (fail-open)",
+				slog.Error("security.pairing_check_failed",
 					"sender_id", senderID, "channel", c.Name(), "error", err)
-				paired = true
+				paired = false
 			} else {
 				paired = p
 			}
