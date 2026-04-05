@@ -222,7 +222,15 @@ func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *p
 		return
 	}
 
-	// Path 3: Token configured but not provided/wrong → check browser pairing
+	// Reject: token configured, client provided a non-empty token, but it didn't match.
+	// A wrong token is an authentication failure — do not fall through to viewer.
+	if configToken != "" && params.Token != "" {
+		slog.Warn("security.ws_wrong_token", "client", client.id)
+		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrUnauthorized, "invalid gateway token"))
+		return
+	}
+
+	// Path 3: Token configured but not provided → check browser pairing
 	ps := r.server.pairingService
 
 	// Path 3a: Reconnecting with a previously-paired sender_id
@@ -279,7 +287,7 @@ func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *p
 		}
 	}
 
-	// Path 4: Fallback → viewer (wrong token or pairing not available)
+	// Path 4: Fallback → viewer (no token provided and pairing not available)
 	client.role = permissions.RoleViewer
 	client.authenticated = true
 	client.userID = params.UserID
